@@ -12,12 +12,14 @@ def match_projects(profile: Dict, jd: Dict) -> List[Dict]:
         overlap = sorted(tags & jd_keywords)
         score = len(overlap) * 3
 
-        if "AI 工具落地" in tags and any(word in raw_text for word in ["ai", "大模型", "智能", "llm", "aigc"]):
-            score += 4
-        if "数据可视化" in tags and any(word in raw_text for word in ["可视化", "看板", "图表", "echarts"]):
-            score += 3
+        if "AI 工具落地" in tags and any(word in raw_text for word in ["ai", "大模型", "智能", "llm", "aigc", "workflow", "工作流", "自动化"]):
+            score += 6
+        if "数据可视化" in tags and any(word in raw_text for word in ["可视化", "看板", "图表", "echarts", "大屏"]):
+            score += 6
         if "AIGC 内容管线" in tags and any(word in raw_text for word in ["aigc", "内容", "生成"]):
-            score += 3
+            score += 4
+        if "FastAPI" in tags and any(word in raw_text for word in ["全栈", "前后端", "接口联调", "后端"]):
+            score += 4
 
         if score <= 0:
             continue
@@ -40,4 +42,3 @@ def calculate_project_score(recommended_projects: List[Dict]) -> int:
         return 4
     top_scores = [item["match_score"] for item in recommended_projects[:2]]
     return min(sum(top_scores), 20)
-

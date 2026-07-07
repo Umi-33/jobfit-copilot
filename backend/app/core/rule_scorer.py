@@ -21,7 +21,8 @@ PRIMARY_SKILL_WEIGHTS = {
 }
 
 SUPPLEMENTARY_SKILLS = {"React", "Next.js", "TypeScript", "Docker", "Linux", "LangChain", "RAG", "Agent"}
-PRODUCTION_RAG_AGENT_HINTS = ["生产级", "复杂 agent", "agent 框架", "rag 系统", "向量数据库", "知识库检索", "langchain"]
+PRODUCTION_RAG_AGENT_HINTS = ["生产级", "复杂 agent", "agent 框架", "rag 系统", "向量数据库", "知识库检索", "langchain", "从0", "从 0", "独立上手"]
+RATING_ORDER = ["D", "C", "C+", "B-", "B", "B+", "A-", "A"]
 
 
 def _as_profile(profile: Union[str, Dict]) -> Dict:
@@ -129,17 +130,18 @@ def score_bonus(profile: Dict, jd: Dict) -> Dict:
     bonus_items = []
     score = 0
 
-    if {"AI 工具落地", "LLM API", "Prompt"} & profile_skills and any(word in raw_text for word in ["ai", "大模型", "智能", "llm"]):
-        score += 4
-        bonus_items.append({"item": "AI 工具落地", "points": 4, "reason": "岗位与 AI 应用落地相关。"})
+    if {"AI 工具落地", "LLM API", "Prompt"} & profile_skills and any(word in raw_text for word in ["ai", "大模型", "智能", "llm", "workflow", "工作流", "自动化"]):
+        points = 6 if any(word in raw_text for word in ["workflow", "工作流", "自动化", "全栈", "接口联调"]) else 4
+        score += points
+        bonus_items.append({"item": "AI 工具落地", "points": points, "reason": "岗位与 AI 应用落地相关。"})
 
     if "AIGC 内容管线" in profile_skills and any(word in raw_text for word in ["aigc", "内容", "生成"]):
         score += 3
         bonus_items.append({"item": "AIGC 内容管线", "points": 3, "reason": "岗位涉及内容生成或 AIGC 流程。"})
 
     if {"ECharts", "数据可视化"} & profile_skills and {"ECharts", "数据可视化"} & jd_skills:
-        score += 3
-        bonus_items.append({"item": "数据可视化", "points": 3, "reason": "岗位需要图表或看板能力。"})
+        score += 5
+        bonus_items.append({"item": "数据可视化", "points": 5, "reason": "岗位需要图表或看板能力。"})
 
     return {"bonus_score": min(score, 10), "bonus_items": bonus_items}
 
@@ -152,17 +154,72 @@ def has_production_rag_agent_requirement(jd: Dict) -> bool:
     return has_advanced_skill and has_production_hint
 
 
-def build_rating(total_score: int, risk_report: Dict) -> str:
-    """Convert score and hard risks into a human-readable rating."""
-    if risk_report["risk_level"] == "high":
-        return "高风险，不建议投递"
-    if total_score >= 80:
-        return "强推荐"
+def _base_rating(total_score: int) -> str:
+    """Map calibrated V0 score to A-D rating buckets."""
+    if total_score >= 82:
+        return "A"
     if total_score >= 65:
+        return "A-"
+    if total_score >= 55:
+        return "B+"
+    if total_score >= 48:
+        return "B"
+    if total_score >= 40:
+        return "B-"
+    if total_score >= 32:
+        return "C+"
+    if total_score >= 25:
+        return "C"
+    return "D"
+
+
+def _cap_rating(rating: str, max_rating: str) -> str:
+    """Apply a maximum allowed rating without changing the score."""
+    if RATING_ORDER.index(rating) > RATING_ORDER.index(max_rating):
+        return max_rating
+    return rating
+
+
+def build_rating(total_score: int, risk_report: Dict, cap_reasons: List[str]) -> str:
+    """Convert score and risk constraints into the calibrated A-D rating."""
+    rating = _base_rating(total_score)
+    hard_types = {item["type"] for item in risk_report.get("hard_risks", [])}
+    soft_types = {item["type"] for item in risk_report.get("soft_risks", [])}
+    unknown_count = len(risk_report.get("unknown_items", []))
+
+    if unknown_count >= 5:
+        rating = _cap_rating(rating, "B+")
+    if {"production_agent_heavy", "rag_agent_framework_heavy"} & soft_types:
+        rating = _cap_rating(rating, "C+")
+        cap_reasons.append("存在生产级 Agent/RAG 要求，最高 rating 不超过 C+。")
+    if hard_types:
+        severe_hard = {
+            "salary_below_floor",
+            "pure_sales",
+            "training_loan",
+            "unpaid_trial",
+            "salary_pressure",
+            "internship_first_unclear_conversion",
+            "communication_red_flag",
+            "requires_independent_full_agent_framework",
+        }
+        rating = _cap_rating(rating, "D" if hard_types & severe_hard else "C")
+    return rating
+
+
+def build_decision(rating: str, risk_report: Dict) -> str:
+    """Produce a separate decision label from rating and risk context."""
+    if rating == "D" or risk_report.get("hard_risks"):
+        return "不建议推进"
+    if len(risk_report.get("unknown_items", [])) >= 3:
+        return "可投但需确认"
+    if risk_report.get("soft_risks") and rating in {"B-", "C+", "C"}:
+        return "谨慎推进"
+    if rating == "A":
+        return "强推荐"
+    if rating in {"A-", "B+"}:
         return "可投递"
-    if total_score >= 50:
-        return "谨慎尝试"
-    return "不推荐"
+    return "谨慎尝试"
 
 
 def score_job(profile_input: Union[str, Dict], jd_input: Union[str, Dict]) -> Dict:
@@ -181,9 +238,11 @@ def score_job(profile_input: Union[str, Dict], jd_input: Union[str, Dict]) -> Di
     matched_items = skill_result["matched_items"] + basic_result["matched_items"] + bonus_result["bonus_items"]
     missing_items = skill_result["missing_items"] + basic_result["missing_items"]
 
+    cap_reasons = list(risk_report.get("cap_reasons", []))
     advanced_cap = None
     if has_production_rag_agent_requirement(jd):
-        advanced_cap = 62
+        advanced_cap = 38
+        cap_reasons.append("命中生产级 RAG/Agent 要求，按可补充了解处理。")
         missing_items.append(
             {
                 "item": "生产级 RAG/Agent 工程经验",
@@ -203,14 +262,31 @@ def score_job(profile_input: Union[str, Dict], jd_input: Union[str, Dict]) -> Di
 
     if advanced_cap is not None:
         total_score = min(total_score, advanced_cap)
-    if any(item["type"] in {"培训贷", "纯销售", "薪资低于底线", "无薪试岗"} for item in risk_report["risk_items"]):
-        total_score = min(total_score, 45)
-    elif any(item["type"] in {"单休", "大小周"} for item in risk_report["risk_items"]):
-        total_score = min(total_score, 68)
+
+    hard_types = {item["type"] for item in risk_report.get("hard_risks", [])}
+    if hard_types & {
+        "salary_below_floor",
+        "pure_sales",
+        "training_loan",
+        "unpaid_trial",
+        "salary_pressure",
+        "internship_first_unclear_conversion",
+        "communication_red_flag",
+        "requires_independent_full_agent_framework",
+    }:
+        total_score = min(total_score, 24)
+        cap_reasons.append("存在严重 hard_risks，total_score 最高不超过 24。")
+    elif hard_types:
+        total_score = min(total_score, 34)
+        cap_reasons.append("存在 hard_risks，total_score 最高不超过 34。")
+
+    rating = build_rating(total_score, risk_report, cap_reasons)
 
     return {
         "total_score": total_score,
-        "rating": build_rating(total_score, risk_report),
+        "rating": rating,
+        "decision": build_decision(rating, risk_report),
+        "risk_level": risk_report["risk_level"],
         "skill_score": skill_result["skill_score"],
         "experience_score": experience_result["experience_score"],
         "experience_reason": experience_result["experience_reason"],
@@ -221,8 +297,12 @@ def score_job(profile_input: Union[str, Dict], jd_input: Union[str, Dict]) -> Di
         "matched_items": matched_items,
         "missing_items": missing_items,
         "risk_items": risk_report["risk_items"],
+        "hard_risks": risk_report["hard_risks"],
+        "soft_risks": risk_report["soft_risks"],
+        "unknown_items": risk_report["unknown_items"],
+        "cap_reasons": cap_reasons,
+        "next_questions": risk_report["next_questions"],
         "recommended_projects": recommended_projects,
         "parsed_profile": profile,
         "parsed_jd": jd,
     }
-

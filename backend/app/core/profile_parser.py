@@ -7,12 +7,30 @@ SKILL_ALIASES = {
     "JavaScript": ["javascript", "js"],
     "Python": ["python"],
     "FastAPI": ["fastapi", "fast api"],
-    "LLM API": ["llm api", "openai api", "大模型 api", "大模型接口", "通义", "智谱", "deepseek"],
+    "LLM API": ["llm api", "openai api", "大模型 api", "大模型接口", "llm", "大模型", "通义", "智谱", "deepseek"],
     "Prompt": ["prompt", "提示词"],
-    "JSON/CSV": ["json", "csv"],
+    "JSON/CSV": ["json", "csv", "结构化输出", "数据处理"],
     "ECharts": ["echarts", "e charts"],
     "数据可视化": ["数据可视化", "可视化", "图表"],
-    "AI 工具落地": ["ai 工具落地", "ai工具落地", "ai 工具原型", "ai工具原型", "ai 工具", "ai工具", "ai 应用", "ai应用", "ai 助手", "ai助手"],
+    "AI 工具落地": [
+        "ai 工具落地",
+        "ai工具落地",
+        "ai 工具原型",
+        "ai工具原型",
+        "ai 工具",
+        "ai工具",
+        "ai 应用",
+        "ai应用",
+        "ai 助手",
+        "ai助手",
+        "workflow",
+        "工作流",
+        "自动化流程",
+        "业务自动化",
+        "自动化提效",
+        "流程优化",
+        "codex工作流",
+    ],
     "AIGC 内容管线": ["aigc 内容管线", "aigc内容管线", "内容管线", "aigc"],
     "React": ["react"],
     "Next.js": ["next.js", "nextjs", "next"],
@@ -93,12 +111,48 @@ def extract_projects(text: str, skills: List[str]) -> List[Dict]:
     projects = []
     text_lower = text.lower()
 
-    if any(word in text_lower for word in ["岗位筛选", "简历", "面试", "jobfit", "ai助手", "ai 助手"]):
+    if any(word in text_lower for word in ["岗位筛选", "投递辅助", "简历", "面试", "jobfit", "ai助手", "ai 助手"]):
         projects.append(
             {
-                "name": "AI 岗位筛选与面试准备助手",
+                "name": "AI岗位筛选与投递辅助工具MVP",
                 "tags": [tag for tag in ["Python", "FastAPI", "LLM API", "Prompt", "JSON/CSV", "AI 工具落地"] if tag in skills],
                 "summary": "围绕岗位 JD 解析、规则评分和面试准备建议做 AI 应用原型。",
+            }
+        )
+
+    if "绛珠踪" in text and any(word in text_lower for word in ["llm", "大模型", "prompt", "结构化输出"]):
+        projects.append(
+            {
+                "name": "《绛珠踪》LLM API评估 + 规则化结构化输出",
+                "tags": [tag for tag in ["Python", "LLM API", "Prompt", "JSON/CSV", "AI 工具落地"] if tag in skills],
+                "summary": "围绕 LLM API 输出质量、Prompt 约束和结构化结果做评估与人工复核。",
+            }
+        )
+
+    if any(word in text for word in ["毕设情感", "情感计算"]):
+        projects.append(
+            {
+                "name": "Vue3 + FastAPI 毕设情感计算可视化系统",
+                "tags": [tag for tag in ["Vue3", "JavaScript", "Python", "FastAPI", "ECharts", "数据可视化", "JSON/CSV"] if tag in skills],
+                "summary": "使用 Vue3、FastAPI 和可视化图表展示情感计算结果。",
+            }
+        )
+
+    if "筋缮" in text:
+        projects.append(
+            {
+                "name": "《筋缮》p5.js交互Web视觉实验",
+                "tags": [tag for tag in ["JavaScript", "数据可视化"] if tag in skills],
+                "summary": "基于 Web 交互和视觉生成实验展示前端表达能力。",
+            }
+        )
+
+    if "数据驱动视觉" in text:
+        projects.append(
+            {
+                "name": "《绛珠踪》数据驱动视觉生成项目",
+                "tags": [tag for tag in ["JavaScript", "JSON/CSV", "数据可视化"] if tag in skills],
+                "summary": "用结构化数据驱动视觉生成与前端展示。",
             }
         )
 
