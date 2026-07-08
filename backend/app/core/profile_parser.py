@@ -114,7 +114,7 @@ def extract_projects(text: str, skills: List[str]) -> List[Dict]:
     if any(word in text_lower for word in ["岗位筛选", "投递辅助", "简历", "面试", "jobfit", "ai助手", "ai 助手"]):
         projects.append(
             {
-                "name": "AI岗位筛选与投递辅助工具MVP",
+                "name": "AI岗位筛选与面试准备助手MVP",
                 "tags": [tag for tag in ["Python", "FastAPI", "LLM API", "Prompt", "JSON/CSV", "AI 工具落地"] if tag in skills],
                 "summary": "围绕岗位 JD 解析、规则评分和面试准备建议做 AI 应用原型。",
             }

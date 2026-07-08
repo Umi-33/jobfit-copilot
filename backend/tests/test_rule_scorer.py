@@ -10,7 +10,7 @@ CALIBRATION_PROFILE = """
 - 经验：1.5 年 Web / AI 工具原型经验。
 - 薪资底线：8000。
 - 技能：Vue3、JavaScript、Python、FastAPI、LLM API、Prompt、JSON/CSV、ECharts、数据可视化、AI 工具落地、AIGC 内容管线。
-- 项目：AI岗位筛选与投递辅助工具MVP，包含 JD 解析、规则评分、Prompt 建议和命令行 demo。
+- 项目：AI岗位筛选与面试准备助手MVP，包含 JD 解析、规则评分、Prompt 建议和命令行 demo。
 - 项目：《绛珠踪》LLM API评估 + Prompt约束 + 结构化输出，用 Python 处理大模型输出质量和人工复核。
 - 项目：Vue3 + FastAPI 毕设情感计算可视化系统，用 ECharts 展示业务指标，处理 JSON/CSV 数据。
 - 项目：《筋缮》p5.js交互Web视觉实验。
@@ -42,7 +42,7 @@ class RuleScorerTests(unittest.TestCase):
         self.assertEqual(result["decision"], "可投但需确认")
         self.assertFalse(result["hard_risks"])
         self.assertIn("技术/工具/数据处理内容是否≥60%", result["unknown_items"])
-        self.assertIn("AI岗位筛选与投递辅助工具MVP", [item["name"] for item in result["recommended_projects"]])
+        self.assertIn("AI岗位筛选与面试准备助手MVP", [item["name"] for item in result["recommended_projects"]])
 
     def test_tc_02_ai_fullstack_school_recruiting_keeps_unknowns(self):
         jd = "AI全栈开发方向，校招岗位，可能涉及AI应用、前后端功能开发、接口联调、AI相关工具或系统开发。JD信息不足：是否外包/派遣、实际用工主体、工作制、薪资、后端深度未确认。"
