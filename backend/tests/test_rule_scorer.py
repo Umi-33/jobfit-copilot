@@ -32,7 +32,8 @@ class RuleScorerTests(unittest.TestCase):
         """
         result = score_job(CALIBRATION_PROFILE, jd)
         self.assertEqual(result["rating"], "A")
-        self.assertEqual(result["decision"], "强推荐")
+        self.assertEqual(result["decision"], "可投但需确认")
+        self.assertIn("是否双休/五天工作制", result["unknown_items"])
         self.assertFalse(result["hard_risks"])
 
     def test_tc_01_ai_tool_landing_high_match_but_unknown_capped(self):
@@ -92,6 +93,49 @@ class RuleScorerTests(unittest.TestCase):
         self.assertEqual(result["rating"], "D")
         self.assertEqual(result["decision"], "不建议推进")
         self.assertIn("salary_below_floor", risk_types(result["hard_risks"]))
+
+    def test_work_schedule_unknown_blocks_strong_decision(self):
+        jd = """
+        AI 应用开发，上海，12-16k，本科，经验不限。
+        需要 Python、FastAPI、LLM API、Prompt、JSON/CSV、Vue3、ECharts、数据可视化。
+        """
+        result = score_job(CALIBRATION_PROFILE, jd)
+        self.assertIn(result["rating"], {"A", "A-"})
+        self.assertIn("是否双休/五天工作制", result["unknown_items"])
+        self.assertEqual(result["decision"], "可投但需确认")
+
+    def test_deployment_stability_does_not_imply_docker_linux(self):
+        jd = "AI 后端应用岗位，上海，12-18k，负责部署稳定性、线上维护和发布保障。"
+        result = score_job(CALIBRATION_PROFILE, jd)
+        soft = risk_types(result["soft_risks"])
+        self.assertIn("deployment_stability_requirement", soft)
+        self.assertNotIn("docker_linux_deployment", soft)
+
+    def test_explicit_docker_linux_hits_docker_linux_deployment(self):
+        jd = "AI 后端应用岗位，上海，12-18k，要求 Docker、Linux、Nginx 和服务器部署经验。"
+        result = score_job(CALIBRATION_PROFILE, jd)
+        self.assertIn("docker_linux_deployment", risk_types(result["soft_risks"]))
+
+    def test_rag_agent_reason_does_not_invent_langchain_langgraph(self):
+        jd = "AI RAG 应用岗位，上海，12-18k，负责 RAG 系统化落地和知识库检索效果优化。"
+        result = score_job(CALIBRATION_PROFILE, jd)
+        reasons = [item["reason"] for item in result["soft_risks"] if item["type"] == "rag_agent_framework_heavy"]
+        self.assertTrue(reasons)
+        self.assertFalse(any("LangChain" in reason or "LangGraph" in reason for reason in reasons))
+
+    def test_explicit_langchain_langgraph_allows_framework_reason(self):
+        jd = "AI RAG 应用岗位，上海，12-18k，明确要求 LangChain、LangGraph 和 RAG 框架经验。"
+        result = score_job(CALIBRATION_PROFILE, jd)
+        reasons = [item["reason"] for item in result["soft_risks"] if item["type"] == "rag_agent_framework_heavy"]
+        self.assertTrue(any("LangChain" in reason or "LangGraph" in reason for reason in reasons))
+
+    def test_possible_operation_support_is_boundary_unknown_not_ratio_high(self):
+        jd = "AI 工具落地岗位，上海，10-15k，可能涉及运营支持和业务流程协同。"
+        result = score_job(CALIBRATION_PROFILE, jd)
+        soft = risk_types(result["soft_risks"])
+        self.assertNotIn("operation_ratio_high", soft)
+        self.assertIn("operation_boundary_unclear", soft)
+        self.assertIn("运营支持是否为主要职责", result["unknown_items"])
 
 
 if __name__ == "__main__":

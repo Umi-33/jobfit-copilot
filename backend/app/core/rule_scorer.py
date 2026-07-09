@@ -211,6 +211,8 @@ def build_decision(rating: str, risk_report: Dict) -> str:
     """Produce a separate decision label from rating and risk context."""
     if rating == "D" or risk_report.get("hard_risks"):
         return "不建议推进"
+    if "是否双休/五天工作制" in risk_report.get("unknown_items", []):
+        return "可投但需确认"
     if len(risk_report.get("unknown_items", [])) >= 3:
         return "可投但需确认"
     if risk_report.get("soft_risks") and rating in {"B-", "C+", "C"}:

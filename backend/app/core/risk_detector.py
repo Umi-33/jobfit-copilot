@@ -20,8 +20,9 @@ SOFT_RISK_CONFIG = {
     "strong_kpi": {"penalty": 3, "reason": "强 KPI 或业绩考核会影响岗位稳定性。"},
     "heavy_overtime": {"penalty": 3, "reason": "高压加班描述需要谨慎评估。"},
     "production_agent_heavy": {"penalty": 5, "reason": "岗位偏生产级 RAG/Agent，不应按普通 AI 应用高估。"},
-    "rag_agent_framework_heavy": {"penalty": 4, "reason": "JD 对 LangChain/LangGraph/RAG 熟练度有要求。"},
+    "rag_agent_framework_heavy": {"penalty": 4, "reason": "JD 涉及 RAG / Agent 系统化落地，需要确认是否要求成熟框架经验。"},
     "docker_linux_deployment": {"penalty": 3, "reason": "岗位涉及 Docker/Linux/部署能力，需要补充确认。"},
+    "deployment_stability_requirement": {"penalty": 3, "reason": "岗位涉及部署稳定性、线上维护或发布保障，需要确认实际工程深度。"},
     "react_next_typescript_hard": {"penalty": 3, "reason": "React/Next/TypeScript 是硬要求时不能按 Vue 经验等同。"},
     "java_backend_heavy": {"penalty": 5, "reason": "Java/SpringCloud/微服务/高并发后端要求偏重。"},
     "backend_heavy": {"penalty": 4, "reason": "后端开发或系统化落地占比偏重。"},
@@ -103,6 +104,9 @@ def _detect_unknowns(jd: Dict, hard_risks: List[Dict]) -> List[str]:
         _add_unknown(unknown_items, "岗位是AI工具落地为主，还是运营为主")
         _add_unknown(unknown_items, "技术/工具/数据处理内容是否≥60%")
 
+    if _has_any(text, ["可能涉及运营支持", "运营支持"]) and _has_uncertainty_context(text):
+        _add_unknown(unknown_items, "运营支持是否为主要职责")
+
     if "后端深度未确认" in text:
         _add_unknown(unknown_items, "后端开发深度与职责边界")
 
@@ -139,11 +143,24 @@ def _detect_soft_risks(jd: Dict, profile: Dict, soft_risks: List[Dict]) -> None:
     if (has_agent or has_rag) and has_production:
         _add_unique(soft_risks, "production_agent_heavy", SOFT_RISK_CONFIG["production_agent_heavy"])
 
-    if _has_any(text_lower, ["langchain", "langgraph"]) or (has_rag and _has_any(text, ["熟练", "框架", "系统"])):
-        _add_unique(soft_risks, "rag_agent_framework_heavy", SOFT_RISK_CONFIG["rag_agent_framework_heavy"])
+    if _has_any(text_lower, ["langchain", "langgraph"]):
+        _add_unique(
+            soft_risks,
+            "rag_agent_framework_heavy",
+            {"penalty": 4, "reason": "JD 明确提到 LangChain/LangGraph，需要确认成熟框架经验。"},
+        )
+    elif has_rag and _has_any(text, ["熟练", "框架", "系统"]):
+        _add_unique(
+            soft_risks,
+            "rag_agent_framework_heavy",
+            {"penalty": 4, "reason": "JD 涉及 RAG / Agent 系统化落地，需要确认是否要求成熟框架经验。"},
+        )
 
-    if _has_any(text_lower, ["docker", "linux", "部署"]):
+    if _has_any(text_lower, ["docker", "linux", "nginx"]) or _has_any(text, ["容器化", "服务器部署", "云服务器"]):
         _add_unique(soft_risks, "docker_linux_deployment", SOFT_RISK_CONFIG["docker_linux_deployment"])
+
+    if _has_any(text, ["部署稳定性", "线上维护", "发布", "稳定性保障"]):
+        _add_unique(soft_risks, "deployment_stability_requirement", SOFT_RISK_CONFIG["deployment_stability_requirement"])
 
     if _has_any(text_lower, ["react", "next", "typescript"]) and _has_any(text, ["必须", "精通", "熟练", "硬要求", "要求"]):
         _add_unique(soft_risks, "react_next_typescript_hard", SOFT_RISK_CONFIG["react_next_typescript_hard"])
@@ -174,7 +191,7 @@ def _detect_soft_risks(jd: Dict, profile: Dict, soft_risks: List[Dict]) -> None:
         _add_unique(soft_risks, "possible_not_junior_friendly", SOFT_RISK_CONFIG["possible_not_junior_friendly"])
         _add_unique(soft_risks, "agent_keyword_trap", SOFT_RISK_CONFIG["agent_keyword_trap"])
 
-    if _has_any(text, ["运营边界不清", "技术/运营占比未确认"]):
+    if _has_any(text, ["运营边界不清", "技术/运营占比未确认", "可能涉及运营支持"]):
         _add_unique(soft_risks, "operation_boundary_unclear", SOFT_RISK_CONFIG["operation_boundary_unclear"])
 
 
