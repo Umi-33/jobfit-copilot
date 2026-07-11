@@ -1,8 +1,13 @@
+import os
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from backend.app.main import app
+from backend.app.storage.database import DATABASE_ENV_VAR
 
 
 PROFILE_TEXT = """
@@ -23,7 +28,17 @@ AI 应用开发助理，上海，10-15k，本科，经验不限。
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(app)
+        self.temp_directory = tempfile.TemporaryDirectory()
+        self.database_path = Path(self.temp_directory.name) / "test_api.sqlite3"
+        self.environment = patch.dict(os.environ, {DATABASE_ENV_VAR: str(self.database_path)})
+        self.environment.start()
+        self.client_context = TestClient(app)
+        self.client = self.client_context.__enter__()
+
+    def tearDown(self):
+        self.client_context.__exit__(None, None, None)
+        self.environment.stop()
+        self.temp_directory.cleanup()
 
     def test_health_returns_ok(self):
         response = self.client.get("/api/health")
