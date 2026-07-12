@@ -48,7 +48,7 @@ class RuleScorerTests(unittest.TestCase):
     def test_tc_02_ai_fullstack_school_recruiting_keeps_unknowns(self):
         jd = "AI全栈开发方向，校招岗位，可能涉及AI应用、前后端功能开发、接口联调、AI相关工具或系统开发。JD信息不足：是否外包/派遣、实际用工主体、工作制、薪资、后端深度未确认。"
         result = score_job(CALIBRATION_PROFILE, jd)
-        self.assertEqual(result["rating"], "B+")
+        self.assertEqual(result["rating"], "B-")
         self.assertEqual(result["decision"], "可投但需确认")
         self.assertIn("是否外包/派遣", result["unknown_items"])
         self.assertIn("实际用工主体是谁", result["unknown_items"])
@@ -65,7 +65,7 @@ class RuleScorerTests(unittest.TestCase):
     def test_tc_04_agent_production_requirement_is_capped(self):
         jd = "AI Agent工程师，1-3年经验，薪资约15-30K，可远程办公。岗位可能涉及生产级Agent、后端开发、Agent评估、稳定性、工具调用、系统化落地。JD信息不足：具体框架、部署要求、是否接受应届未确认。"
         result = score_job(CALIBRATION_PROFILE, jd)
-        self.assertEqual(result["rating"], "C+")
+        self.assertEqual(result["rating"], "C")
         self.assertNotEqual(result["decision"], "强推荐")
         soft = risk_types(result["soft_risks"])
         self.assertTrue({"production_agent_heavy", "backend_heavy", "agent_keyword_trap"} <= soft)

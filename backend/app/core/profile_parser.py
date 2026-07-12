@@ -39,7 +39,7 @@ SKILL_ALIASES = {
     "Linux": ["linux"],
     "LangChain": ["langchain"],
     "RAG": ["rag", "检索增强"],
-    "Agent": ["agent", "智能体"],
+    "Agent": ["agent", "智能体", "agentic workflow", "agent workflow", "agent 工作流"],
 }
 
 CITIES = ["北京", "上海", "深圳", "广州", "杭州", "成都", "武汉", "南京", "苏州", "远程"]
@@ -54,6 +54,19 @@ EDUCATION_LEVELS = {
 
 NEGATION_MARKERS = ["没有", "无", "未掌握", "不具备", "未使用", "不熟悉", "不了解", "缺乏", "不会"]
 CLAUSE_SPLIT_PATTERN = r"(?:但是|不过|然而|但)|[\r\n。；;，,]"
+TOP_LEVEL_PROFILE_SECTIONS = {
+    "用户画像",
+    "能力边界",
+    "求职偏好",
+    "技能",
+    "项目能力",
+    "城市偏好",
+    "学历",
+    "经验",
+    "薪资底线",
+    "补充了解",
+    "求职方向",
+}
 
 
 def _alias_in_text(text_lower: str, alias: str) -> bool:
@@ -130,81 +143,73 @@ def extract_preferred_cities(text: str) -> List[str]:
 
 
 def extract_projects(text: str, skills: List[str]) -> List[Dict]:
-    """Build lightweight project cards from recognizable project descriptions."""
+    """Build project cards from explicit declarations and their following lines."""
+    blocks = []
+    current = None
+
+    for raw_line in text.splitlines():
+        line = re.sub(r"^\s*[-*]\s*", "", raw_line).strip()
+        if not line:
+            continue
+
+        project_content = None
+        prefixed = re.match(r"^(?:项目|作品|毕设)\s*[：:]\s*(.+)$", line)
+        completed = re.match(r"^(?:我)?(?:做过|开发过)\s*(.+)$", line)
+        named = re.search(r"项目名称\s*[：:]?\s*(《[^》]+》|[^，,：:]+)", line)
+
+        if prefixed:
+            project_content = prefixed.group(1).strip()
+        elif completed:
+            project_content = completed.group(1).strip()
+        elif named:
+            project_content = line
+
+        if project_content is not None:
+            if current:
+                blocks.append(current)
+
+            named_content = re.search(r"项目名称\s*[：:]?\s*(《[^》]+》|[^，,：:]+)", project_content)
+            if named_content:
+                name = named_content.group(1).strip()
+                trailing = project_content[named_content.end() :].lstrip("：:，, ").strip()
+            else:
+                parts = re.split(r"[，,]", project_content, maxsplit=1)
+                name = parts[0].strip()
+                trailing = parts[1].strip() if len(parts) > 1 else ""
+
+            current = {"name": name, "descriptions": [trailing] if trailing else []}
+            continue
+
+        section = re.match(r"^([^：:]+)\s*[：:]", line)
+        if section and section.group(1).strip() in TOP_LEVEL_PROFILE_SECTIONS:
+            if current:
+                blocks.append(current)
+                current = None
+            continue
+
+        if current:
+            current["descriptions"].append(line)
+
+    if current:
+        blocks.append(current)
+
     projects = []
-    text_lower = text.lower()
-
-    if any(word in text_lower for word in ["岗位筛选", "投递辅助", "简历", "面试", "jobfit", "ai助手", "ai 助手"]):
+    seen_names = set()
+    for block in blocks:
+        name = block["name"]
+        if not name or name in seen_names:
+            continue
+        descriptions = [item for item in block["descriptions"] if item]
+        block_text = "\n".join([name] + descriptions)
+        declared_skills = set(extract_skills(block_text))
         projects.append(
             {
-                "name": "AI岗位筛选与面试准备助手MVP",
-                "tags": [tag for tag in ["Python", "FastAPI", "LLM API", "Prompt", "JSON/CSV", "AI 工具落地"] if tag in skills],
-                "summary": "围绕岗位 JD 解析、规则评分和面试准备建议做 AI 应用原型。",
+                "name": name,
+                "tags": [skill for skill in skills if skill in declared_skills],
+                "summary": "；".join(descriptions),
             }
         )
-
-    if "绛珠踪" in text and any(word in text_lower for word in ["llm", "大模型", "prompt", "结构化输出"]):
-        projects.append(
-            {
-                "name": "《绛珠踪》LLM API评估 + 规则化结构化输出",
-                "tags": [tag for tag in ["Python", "LLM API", "Prompt", "JSON/CSV", "AI 工具落地"] if tag in skills],
-                "summary": "围绕 LLM API 输出质量、Prompt 约束和结构化结果做评估与人工复核。",
-            }
-        )
-
-    if any(word in text for word in ["毕设情感", "情感计算"]):
-        projects.append(
-            {
-                "name": "Vue3 + FastAPI 毕设情感计算可视化系统",
-                "tags": [tag for tag in ["Vue3", "JavaScript", "Python", "FastAPI", "ECharts", "数据可视化", "JSON/CSV"] if tag in skills],
-                "summary": "使用 Vue3、FastAPI 和可视化图表展示情感计算结果。",
-            }
-        )
-
-    if "筋缮" in text:
-        projects.append(
-            {
-                "name": "《筋缮》p5.js交互Web视觉实验",
-                "tags": [tag for tag in ["JavaScript", "数据可视化"] if tag in skills],
-                "summary": "基于 Web 交互和视觉生成实验展示前端表达能力。",
-            }
-        )
-
-    if "数据驱动视觉" in text:
-        projects.append(
-            {
-                "name": "《绛珠踪》数据驱动视觉生成项目",
-                "tags": [tag for tag in ["JavaScript", "JSON/CSV", "数据可视化"] if tag in skills],
-                "summary": "用结构化数据驱动视觉生成与前端展示。",
-            }
-        )
-
-    if any(word in text_lower for word in ["aigc", "内容管线", "小红书", "公众号", "短视频"]):
-        projects.append(
-            {
-                "name": "AIGC 内容管线工具",
-                "tags": [tag for tag in ["Python", "Prompt", "LLM API", "AIGC 内容管线", "JSON/CSV"] if tag in skills],
-                "summary": "将选题、素材整理、提示词生成和内容质检串成可复用流程。",
-            }
-        )
-
-    if any(word in text_lower for word in ["echarts", "数据可视化", "看板", "图表"]):
-        projects.append(
-            {
-                "name": "Vue3 数据可视化看板",
-                "tags": [tag for tag in ["Vue3", "JavaScript", "ECharts", "数据可视化", "JSON/CSV"] if tag in skills],
-                "summary": "使用 Vue3 和 ECharts 展示业务数据，处理 JSON/CSV 数据源。",
-            }
-        )
-
-    if not projects:
-        projects.append(
-            {
-                "name": "通用 Web 工具原型",
-                "tags": skills[:5],
-                "summary": "基于已有技能完成轻量 Web 工具或自动化脚本。",
-            }
-        )
+        seen_names.add(name)
 
     return projects
 

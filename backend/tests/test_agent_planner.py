@@ -38,19 +38,19 @@ class AgentPlannerTests(unittest.TestCase):
         self.assertIn("prepare_interview", plan["secondary_actions"])
         self.assert_human_approval(plan)
 
-    def test_many_unknowns_asks_clarifying_questions(self):
+    def test_many_unknowns_with_lower_fit_requires_manual_review(self):
         jd = "AI全栈开发方向，校招岗位，可能涉及AI应用、前后端功能开发、接口联调、AI相关工具或系统开发。JD信息不足：是否外包/派遣、实际用工主体、工作制、薪资、后端深度未确认。"
         analysis, plan = plan_for(jd)
         self.assertGreaterEqual(len(analysis["unknown_items"]), 3)
-        self.assertEqual(plan["primary_action"], "ask_clarifying_questions")
+        self.assertEqual(plan["primary_action"], "manual_review_required")
         self.assert_human_approval(plan)
 
-    def test_agent_rag_heavy_uses_cautious_pitch(self):
+    def test_agent_rag_heavy_with_d_rating_is_archived(self):
         jd = "AI Agent工程师，1-3年经验，薪资约15-30K，可远程办公。岗位可能涉及生产级Agent、后端开发、Agent评估、稳定性、工具调用、系统化落地。JD信息不足：具体框架、部署要求、是否接受应届未确认。"
         analysis, plan = plan_for(jd)
         soft_types = {item["type"] for item in analysis["soft_risks"]}
         self.assertIn("production_agent_heavy", soft_types)
-        self.assertEqual(plan["primary_action"], "cautious_pitch")
+        self.assertEqual(plan["primary_action"], "archive_job")
         self.assertIn("不能声称独立负责生产级 Agent 框架", plan["blocked_outputs"])
         self.assert_human_approval(plan)
 
