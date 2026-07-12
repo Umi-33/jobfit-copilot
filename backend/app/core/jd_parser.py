@@ -25,7 +25,7 @@ EDUCATION_ORDER = ["不限", "大专", "本科", "硕士", "博士"]
 
 def _word_in_text(text_lower: str, word: str) -> bool:
     word_lower = word.lower()
-    if re.fullmatch(r"[a-z0-9.+#]{1,2}", word_lower):
+    if re.fullmatch(r"[a-z0-9.+# ]+", word_lower):
         return re.search(rf"(?<![a-z0-9]){re.escape(word_lower)}(?![a-z0-9])", text_lower) is not None
     return word_lower in text_lower
 
@@ -46,16 +46,18 @@ def extract_salary(text: str) -> Dict:
     """Parse common monthly salary formats into min and max yuan values."""
     text_lower = text.lower().replace(" ", "")
     patterns: List[Tuple[str, int]] = [
-        (r"(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)k", 1000),
-        (r"(\d+(?:\.\d+)?)k-(\d+(?:\.\d+)?)k", 1000),
-        (r"(\d+(?:\.\d+)?)-(\d+(?:\.\d+)?)千", 1000),
-        (r"(\d{4,5})-(\d{4,5})", 1),
+        (r"(?<!\d)(\d{1,3}(?:\.\d+)?)k[-~至](\d{1,3}(?:\.\d+)?)k(?!\d)", 1000),
+        (r"(?<!\d)(\d{1,3}(?:\.\d+)?)[-~至](\d{1,3}(?:\.\d+)?)k(?!\d)", 1000),
+        (r"(?<!\d)(\d{1,3}(?:\.\d+)?)[-~至](\d{1,3}(?:\.\d+)?)千(?!\d)", 1000),
+        (r"(?<!\d)(\d{4,6})[-~至](\d{4,6})(?!\d|届|年)", 1),
     ]
     for pattern, multiplier in patterns:
         match = re.search(pattern, text_lower, flags=re.IGNORECASE)
         if match:
             salary_min = int(float(match.group(1)) * multiplier)
             salary_max = int(float(match.group(2)) * multiplier)
+            if min(salary_min, salary_max) < 3000 or max(salary_min, salary_max) > 100000:
+                continue
             return {
                 "min": min(salary_min, salary_max),
                 "max": max(salary_min, salary_max),
@@ -75,7 +77,7 @@ def extract_experience(text: str) -> Dict:
     if "经验不限" in text or "不限经验" in text:
         return {"min": 0.0, "max": None, "raw": "经验不限"}
 
-    range_match = re.search(r"(\d+(?:\.\d+)?)\s*[-~至]\s*(\d+(?:\.\d+)?)\s*年", text)
+    range_match = re.search(r"(?<!\d)(\d{1,2}(?:\.\d+)?)\s*[-~至]\s*(\d{1,2}(?:\.\d+)?)\s*年", text)
     if range_match:
         return {
             "min": float(range_match.group(1)),
@@ -83,20 +85,32 @@ def extract_experience(text: str) -> Dict:
             "raw": range_match.group(0),
         }
 
-    min_match = re.search(r"(\d+(?:\.\d+)?)\s*年(?:以上|及以上|\+)", text)
-    if min_match:
-        return {"min": float(min_match.group(1)), "max": None, "raw": min_match.group(0)}
+    minimum_patterns = [
+        r"至少\s*(\d{1,2}(?:\.\d+)?)\s*年[^。；;，,\r\n]{0,20}?经验",
+        r"(?<!\d)(\d{1,2}(?:\.\d+)?)\s*年(?:以上|及以上|\+)[^。；;，,\r\n]{0,20}?(?:经验|$)",
+    ]
+    for pattern in minimum_patterns:
+        min_match = re.search(pattern, text)
+        if min_match:
+            return {"min": float(min_match.group(1)), "max": None, "raw": min_match.group(0)}
 
-    simple_match = re.search(r"(\d+(?:\.\d+)?)\s*年", text)
+    simple_match = re.search(r"(?<!\d)(\d{1,2}(?:\.\d+)?)\s*年[^。；;，,\r\n]{0,20}?经验", text)
     if simple_match:
         value = float(simple_match.group(1))
         return {"min": value, "max": value, "raw": simple_match.group(0)}
+
+    if any(keyword in text for keyword in ["在校", "应届", "毕业生", "校招"]):
+        return {"min": 0.0, "max": None, "raw": "在校/应届"}
 
     return {"min": 0.0, "max": None, "raw": None}
 
 
 def extract_education(text: str) -> str:
-    """Extract the highest explicit education requirement."""
+    """Extract the minimum explicit education requirement."""
+    minimum_match = re.search(r"(大专|本科|硕士|博士)\s*(?:及)?以上", text)
+    if minimum_match:
+        return minimum_match.group(1)
+
     found = [level for level in EDUCATION_ORDER if level != "不限" and level in text]
     if not found or "学历不限" in text or "不限学历" in text:
         return "不限"

@@ -33,7 +33,7 @@ SKILL_ALIASES = {
     ],
     "AIGC 内容管线": ["aigc 内容管线", "aigc内容管线", "内容管线", "aigc"],
     "React": ["react"],
-    "Next.js": ["next.js", "nextjs", "next"],
+    "Next.js": ["next.js", "nextjs"],
     "TypeScript": ["typescript", "ts"],
     "Docker": ["docker"],
     "Linux": ["linux"],
@@ -52,10 +52,13 @@ EDUCATION_LEVELS = {
     "博士": 4,
 }
 
+NEGATION_MARKERS = ["没有", "无", "未掌握", "不具备", "未使用", "不熟悉", "不了解", "缺乏", "不会"]
+CLAUSE_SPLIT_PATTERN = r"(?:但是|不过|然而|但)|[\r\n。；;，,]"
+
 
 def _alias_in_text(text_lower: str, alias: str) -> bool:
     alias_lower = alias.lower()
-    if re.fullmatch(r"[a-z0-9.+#]{1,2}", alias_lower):
+    if re.fullmatch(r"[a-z0-9.+# ]+", alias_lower):
         return re.search(rf"(?<![a-z0-9]){re.escape(alias_lower)}(?![a-z0-9])", text_lower) is not None
     return alias_lower in text_lower
 
@@ -65,14 +68,34 @@ def _contains_alias(text_lower: str, aliases: List[str]) -> bool:
 
 
 def extract_skills(text: str) -> List[str]:
-    """Extract normalized skills from a free-form profile text."""
-    text_lower = text.lower()
-    return [skill for skill, aliases in SKILL_ALIASES.items() if _contains_alias(text_lower, aliases)]
+    """Extract skills from affirmative profile clauses without promoting negations."""
+    clauses = [clause.strip() for clause in re.split(CLAUSE_SPLIT_PATTERN, text.lower()) if clause.strip()]
+    affirmative_clauses = [
+        clause for clause in clauses if not any(marker in clause for marker in NEGATION_MARKERS)
+    ]
+    return [
+        skill
+        for skill, aliases in SKILL_ALIASES.items()
+        if any(_contains_alias(clause, aliases) for clause in affirmative_clauses)
+    ]
 
 
 def extract_experience_years(text: str) -> float:
-    """Extract the largest mentioned year count as a simple experience estimate."""
-    values = [float(match) for match in re.findall(r"(\d+(?:\.\d+)?)\s*年", text)]
+    """Extract plausible experience years while ignoring dates and project duration."""
+    patterns = [
+        r"(?:工作|开发|全职|相关)?经验\s*[:：]?\s*(\d{1,2}(?:\.\d+)?)\s*年",
+        r"(\d{1,2}(?:\.\d+)?)\s*年[^。；;，,\r\n]{0,30}?经验",
+    ]
+    values = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            clause_start = max(text.rfind(separator, 0, match.start()) for separator in ["。", "；", ";", "，", ",", "\n"])
+            clause = text[clause_start + 1 : match.end()]
+            if any(marker in clause for marker in ["项目持续", "项目周期", "项目历时", "入学", "毕业"]):
+                continue
+            value = float(match.group(1))
+            if 0 <= value <= 50:
+                values.append(value)
     if not values:
         return 0.0
     return max(values)
