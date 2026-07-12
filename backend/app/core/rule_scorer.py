@@ -21,7 +21,6 @@ PRIMARY_SKILL_WEIGHTS = {
 }
 
 SUPPLEMENTARY_SKILLS = {"React", "Next.js", "TypeScript", "Docker", "Linux", "LangChain", "RAG", "Agent"}
-PRODUCTION_RAG_AGENT_HINTS = ["生产级", "复杂 agent", "agent 框架", "rag 系统", "向量数据库", "知识库检索", "langchain", "从0", "从 0", "独立上手"]
 RATING_ORDER = ["D", "C", "C+", "B-", "B", "B+", "A-", "A"]
 
 
@@ -96,7 +95,8 @@ def score_basic(profile: Dict, jd: Dict) -> Dict:
 
     city = jd.get("city")
     preferred_cities = profile.get("preferred_cities", [])
-    if not city or city in preferred_cities or "远程" in preferred_cities:
+    jd_supports_remote = "远程" in jd.get("raw_text", "")
+    if not city or city in preferred_cities or (jd_supports_remote and "远程" in preferred_cities):
         score += 5
         matched.append({"item": "城市", "points": 5, "reason": "城市未限制或符合用户偏好。"})
     else:
@@ -130,12 +130,42 @@ def score_bonus(profile: Dict, jd: Dict) -> Dict:
     bonus_items = []
     score = 0
 
-    if {"AI 工具落地", "LLM API", "Prompt"} & profile_skills and any(word in raw_text for word in ["ai", "大模型", "智能", "llm", "workflow", "工作流", "自动化"]):
-        points = 6 if any(word in raw_text for word in ["workflow", "工作流", "自动化", "全栈", "接口联调"]) else 4
+    ai_application_terms = [
+        "大模型 api",
+        "大模型接口",
+        "llm api",
+        "ai 工具落地",
+        "ai工具落地",
+        "prompt",
+        "agent 工作流",
+        "agent工作流",
+        "agentic workflow",
+        "ai 平台集成",
+        "ai平台集成",
+        "ai 产品开发",
+        "ai产品开发",
+        "ai 应用开发",
+        "ai应用开发",
+        "ai 平台 sdk",
+        "ai平台sdk",
+    ]
+    if {"AI 工具落地", "LLM API", "Prompt"} & profile_skills and any(term in raw_text for term in ai_application_terms):
+        points = 6 if any(term in raw_text for term in ["ai 工具落地", "ai工具落地", "agent 工作流", "agent工作流", "agentic workflow"]) else 4
         score += points
         bonus_items.append({"item": "AI 工具落地", "points": points, "reason": "岗位与 AI 应用落地相关。"})
 
-    if "AIGC 内容管线" in profile_skills and any(word in raw_text for word in ["aigc", "内容", "生成"]):
+    aigc_content_terms = [
+        "aigc 内容管线",
+        "aigc内容管线",
+        "内容生成流程",
+        "文案生成",
+        "图像内容生成",
+        "视频内容生成",
+        "批量内容生产",
+        "内容生产流程",
+    ]
+    has_content_workflow = all(term in raw_text for term in ["选题", "素材", "生成", "审核"])
+    if "AIGC 内容管线" in profile_skills and (has_content_workflow or any(term in raw_text for term in aigc_content_terms)):
         score += 3
         bonus_items.append({"item": "AIGC 内容管线", "points": 3, "reason": "岗位涉及内容生成或 AIGC 流程。"})
 
@@ -144,14 +174,6 @@ def score_bonus(profile: Dict, jd: Dict) -> Dict:
         bonus_items.append({"item": "数据可视化", "points": 5, "reason": "岗位需要图表或看板能力。"})
 
     return {"bonus_score": min(score, 10), "bonus_items": bonus_items}
-
-
-def has_production_rag_agent_requirement(jd: Dict) -> bool:
-    """Detect JD wording that implies mature RAG or Agent engineering expectations."""
-    raw_text = jd.get("raw_text", "").lower()
-    has_advanced_skill = bool({"RAG", "Agent", "LangChain"} & set(jd.get("tech_keywords", [])))
-    has_production_hint = any(hint in raw_text for hint in PRODUCTION_RAG_AGENT_HINTS)
-    return has_advanced_skill and has_production_hint
 
 
 def _base_rating(total_score: int) -> str:
@@ -189,9 +211,12 @@ def build_rating(total_score: int, risk_report: Dict, cap_reasons: List[str]) ->
 
     if unknown_count >= 5:
         rating = _cap_rating(rating, "B+")
-    if {"production_agent_heavy", "rag_agent_framework_heavy"} & soft_types:
+    if "production_agent_heavy" in soft_types:
         rating = _cap_rating(rating, "C+")
         cap_reasons.append("存在生产级 Agent/RAG 要求，最高 rating 不超过 C+。")
+    elif "rag_agent_framework_heavy" in soft_types:
+        rating = _cap_rating(rating, "C+")
+        cap_reasons.append("存在明确的成熟 RAG/Agent 框架强要求，最高 rating 不超过 C+。")
     if hard_types:
         severe_hard = {
             "salary_below_floor",
@@ -242,13 +267,19 @@ def score_job(profile_input: Union[str, Dict], jd_input: Union[str, Dict]) -> Di
 
     cap_reasons = list(risk_report.get("cap_reasons", []))
     advanced_cap = None
-    if has_production_rag_agent_requirement(jd):
+    soft_types = {item["type"] for item in risk_report.get("soft_risks", [])}
+    advanced_risks = {"production_agent_heavy", "rag_agent_framework_heavy"} & soft_types
+    if advanced_risks:
         advanced_cap = 38
-        cap_reasons.append("命中生产级 RAG/Agent 要求，按可补充了解处理。")
+        is_production = "production_agent_heavy" in advanced_risks
         missing_items.append(
             {
-                "item": "生产级 RAG/Agent 工程经验",
-                "reason": "JD 明确偏生产级 RAG/Agent，当前画像只能按可补充了解处理，不能包装成成熟工程经验。",
+                "item": "生产级 RAG/Agent 工程经验" if is_production else "成熟 RAG/Agent 框架经验",
+                "reason": (
+                    "JD 明确偏生产级 RAG/Agent，当前画像只能按可补充了解处理，不能包装成成熟工程经验。"
+                    if is_production
+                    else "JD 明确要求成熟 RAG/Agent 框架经验，当前画像只能按可补充了解处理。"
+                ),
             }
         )
 

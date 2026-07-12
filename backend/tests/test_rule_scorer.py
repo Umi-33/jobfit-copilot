@@ -52,7 +52,7 @@ class RuleScorerTests(unittest.TestCase):
         self.assertEqual(result["decision"], "可投但需确认")
         self.assertIn("是否外包/派遣", result["unknown_items"])
         self.assertIn("实际用工主体是谁", result["unknown_items"])
-        self.assertIn("backend_heavy", risk_types(result["soft_risks"]))
+        self.assertNotIn("backend_heavy", risk_types(result["soft_risks"]))
 
     def test_tc_03_vue_echarts_visualization_is_core_window(self):
         jd = "前端开发岗位，方向包含Vue、ECharts、大屏/数据可视化或相关前端页面开发。适合用Vue3、ECharts、前后端接口联调和可视化项目经验切入。JD信息不足：工作制、薪资、具体技术栈、是否接受应届未确认。"

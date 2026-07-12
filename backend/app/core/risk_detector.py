@@ -1,4 +1,5 @@
-from typing import Dict, List
+import re
+from typing import Dict, List, Optional
 
 
 HARD_RISK_CONFIG = {
@@ -52,6 +53,25 @@ RISK_KEYWORD_MAP = {
     "高压加班": ("soft", "heavy_overtime"),
 }
 
+RISK_CONFIRM_TERMS = {
+    "single_rest": ["单休", "做六休一", "周休1天"],
+    "big_small_week": ["大小周"],
+    "pure_sales": ["纯销售", "电销", "电话销售", "地推", "陌拜"],
+    "training_loan": ["培训贷", "贷款培训", "先交费", "先缴费", "付费培训"],
+    "unpaid_trial": ["无薪", "试岗无薪"],
+    "salary_pressure": ["压薪"],
+    "internship_first_unclear_conversion": ["先实习看看", "转正不明", "转正标准不明"],
+    "communication_red_flag": ["沟通不尊重", "不尊重"],
+    "sales_tendency": ["销售", "客户转化", "邀约", "成单", "提成"],
+    "operation_ratio_high": ["运营占比高", "主要做运营", "运营为主", "偏运营", "以运营为主", "运营占比"],
+    "strong_kpi": ["kpi", "业绩指标", "强考核"],
+    "heavy_overtime": ["抗压", "996", "加班严重"],
+}
+
+NEGATION_MARKERS = ["无需", "无须", "不需要", "不要求", "不设", "不是", "非销售", "了解即可"]
+SENTENCE_SPLIT_PATTERN = r"[。！？!?；;\r\n]+"
+CLAUSE_SPLIT_PATTERN = r"[。！？!?；;，,\r\n]+"
+
 
 def _add_unique(items: List[Dict], risk_type: str, config: Dict) -> None:
     if any(item["type"] == risk_type for item in items):
@@ -72,13 +92,120 @@ def _has_uncertainty_context(text: str) -> bool:
     return _has_any(text, ["信息不足", "未确认", "未知", "不清", "不明确", "待确认", "可能"])
 
 
+def _segments(text: str, pattern: str = CLAUSE_SPLIT_PATTERN) -> List[str]:
+    return [segment.strip() for segment in re.split(pattern, text) if segment.strip()]
+
+
+def _is_negated(segment: str) -> bool:
+    return any(marker in segment for marker in NEGATION_MARKERS)
+
+
+def _has_positive_term(text: str, terms: List[str]) -> bool:
+    """Find a term in a short clause that is not explicitly negated."""
+    for segment in _segments(text):
+        segment_lower = segment.lower()
+        if not _is_negated(segment) and any(term.lower() in segment_lower for term in terms):
+            return True
+    return False
+
+
+def _has_java_word(text: str) -> bool:
+    return re.search(r"(?<![a-z0-9])java(?![a-z0-9])", text.lower()) is not None
+
+
+def _has_advanced_ai_term(text: str) -> bool:
+    text_lower = text.lower()
+    return bool(re.search(r"(?<![a-z0-9])(?:rag|agent)(?![a-z0-9])", text_lower)) or "智能体" in text
+
+
+def _framework_risk_reason(jd: Dict) -> Optional[str]:
+    """Detect mature RAG/Agent framework requirements within one sentence."""
+    for sentence in _segments(jd.get("raw_text", ""), SENTENCE_SPLIT_PATTERN):
+        if _is_negated(sentence):
+            continue
+        sentence_lower = sentence.lower()
+        has_framework_name = _has_any(sentence_lower, ["langchain", "langgraph"])
+        has_advanced = _has_advanced_ai_term(sentence)
+        strong_framework = _has_any(
+            sentence,
+            ["熟练掌握", "熟练使用", "精通", "明确要求", "完整 RAG 项目经验", "完整RAG项目经验", "RAG 框架经验", "RAG框架经验"],
+        )
+        explicit_responsibility = has_advanced and _has_any(
+            sentence,
+            ["负责搭建", "负责设计", "框架设计", "系统化落地", "独立设计多 Agent", "独立设计多Agent"],
+        )
+        if has_framework_name and strong_framework:
+            return "JD 明确要求 LangChain/LangGraph 等成熟框架经验。"
+        if explicit_responsibility or (has_advanced and strong_framework):
+            return SOFT_RISK_CONFIG["rag_agent_framework_heavy"]["reason"]
+    return None
+
+
+def has_production_rag_agent_requirement(jd: Dict) -> bool:
+    """Detect explicit production RAG/Agent responsibility within one sentence."""
+    for sentence in _segments(jd.get("raw_text", ""), SENTENCE_SPLIT_PATTERN):
+        if _is_negated(sentence) or not _has_advanced_ai_term(sentence):
+            continue
+        has_responsibility = _has_any(sentence, ["负责", "承担", "涉及", "独立", "从0", "从 0", "搭建", "部署"])
+        if "生产级" in sentence and has_responsibility:
+            return True
+        production_tasks = ["监控", "评估", "召回优化", "稳定性", "生产部署", "故障处理"]
+        task_count = sum(task in sentence for task in production_tasks)
+        if "负责" in sentence and task_count >= 2:
+            return True
+    return False
+
+
+def _has_independent_from_zero_agent_requirement(jd: Dict) -> bool:
+    for sentence in _segments(jd.get("raw_text", ""), SENTENCE_SPLIT_PATTERN):
+        if _is_negated(sentence) or not _has_advanced_ai_term(sentence):
+            continue
+        has_from_zero = _has_any(sentence, ["从0", "从 0"])
+        has_strong_ownership = _has_any(sentence, ["独立负责", "独立上手", "要求能独立", "生产级"])
+        if has_from_zero and has_strong_ownership:
+            return True
+        if "独立负责" in sentence and "生产级" in sentence:
+            return True
+    return False
+
+
+def _has_explicit_java_backend_requirement(text: str) -> bool:
+    for sentence in _segments(text, SENTENCE_SPLIT_PATTERN):
+        if _is_negated(sentence):
+            continue
+        sentence_lower = sentence.lower()
+        if _has_any(sentence_lower, ["spring boot", "springboot", "spring cloud", "springcloud"]):
+            return True
+        if _has_java_word(sentence) and _has_any(sentence, ["后端", "服务端", "微服务", "高并发"]):
+            return True
+        if _has_any(sentence, ["Java 微服务", "Java微服务", "高并发后端系统", "后端架构", "服务端开发"]):
+            return True
+    return False
+
+
+def _has_backend_responsibility(text: str) -> bool:
+    for sentence in _segments(text, SENTENCE_SPLIT_PATTERN):
+        if _is_negated(sentence):
+            continue
+        if _has_any(sentence, ["后端开发团队", "与后端协作", "和后端协作", "接口联调", "数据交互", "调用后端", "对接后端"]):
+            continue
+        if _has_any(
+            sentence,
+            ["负责后端开发", "承担后端开发", "后端开发职责", "后端架构", "服务端开发", "后端系统开发", "开发后端服务", "全栈开发"],
+        ):
+            return True
+        if "后端开发" in sentence and _has_any(sentence, ["要求", "需要", "岗位涉及", "可能涉及", "职责包含"]):
+            return True
+    return False
+
+
 def _detect_unknowns(jd: Dict, hard_risks: List[Dict]) -> List[str]:
     """Find missing JD facts that should block over-confident recommendations."""
     text = jd.get("raw_text", "")
     salary = jd.get("salary", {})
     unknown_items: List[str] = []
 
-    if not _has_any(text, ["双休", "五天", "五天工作制", "单休", "大小周", "做六休一"]):
+    if not _has_positive_term(text, ["双休", "五天", "五天工作制", "单休", "大小周", "做六休一"]):
         _add_unknown(unknown_items, "是否双休/五天工作制")
 
     if salary.get("min") is None and salary.get("max") is None:
@@ -119,8 +246,10 @@ def _detect_unknowns(jd: Dict, hard_risks: List[Dict]) -> List[str]:
     if "全栈" in text and _has_uncertainty_context(text):
         _add_unknown(unknown_items, "是否要求独立负责生产级全栈系统")
 
-    if _has_any(text, ["生产级Agent", "生产级 Agent", "Agent框架", "Agent 框架", "从0搭", "从 0 搭"]):
+    if has_production_rag_agent_requirement(jd):
         _add_unknown(unknown_items, "是否需要独立负责生产级Agent系统")
+    elif _framework_risk_reason(jd):
+        _add_unknown(unknown_items, "是否要求成熟RAG/Agent框架经验")
 
     if any(item["type"] == "internship_first_unclear_conversion" for item in hard_risks):
         _add_unknown(unknown_items, "试用/实习周期")
@@ -136,39 +265,37 @@ def _detect_soft_risks(jd: Dict, profile: Dict, soft_risks: List[Dict]) -> None:
     tech_keywords = set(jd.get("tech_keywords", []))
     salary = jd.get("salary", {})
 
-    has_agent = "Agent" in tech_keywords or "agent" in text_lower
-    has_rag = "RAG" in tech_keywords or "rag" in text_lower
-    has_production = _has_any(text, ["生产级", "系统化落地", "独立上手", "从0", "从 0", "工具调用"])
+    has_agent = "Agent" in tech_keywords or bool(re.search(r"(?<![a-z0-9])agent(?![a-z0-9])", text_lower))
+    has_rag = "RAG" in tech_keywords or bool(re.search(r"(?<![a-z0-9])rag(?![a-z0-9])", text_lower))
+    has_production = has_production_rag_agent_requirement(jd)
 
-    if (has_agent or has_rag) and has_production:
+    if has_production:
         _add_unique(soft_risks, "production_agent_heavy", SOFT_RISK_CONFIG["production_agent_heavy"])
 
-    if _has_any(text_lower, ["langchain", "langgraph"]):
+    framework_reason = _framework_risk_reason(jd)
+    if framework_reason:
         _add_unique(
             soft_risks,
             "rag_agent_framework_heavy",
-            {"penalty": 4, "reason": "JD 明确提到 LangChain/LangGraph，需要确认成熟框架经验。"},
-        )
-    elif has_rag and _has_any(text, ["熟练", "框架", "系统"]):
-        _add_unique(
-            soft_risks,
-            "rag_agent_framework_heavy",
-            {"penalty": 4, "reason": "JD 涉及 RAG / Agent 系统化落地，需要确认是否要求成熟框架经验。"},
+            {"penalty": 4, "reason": framework_reason},
         )
 
-    if _has_any(text_lower, ["docker", "linux", "nginx"]) or _has_any(text, ["容器化", "服务器部署", "云服务器"]):
+    if _has_positive_term(text, ["docker", "linux", "nginx", "容器化", "服务器部署", "云服务器"]):
         _add_unique(soft_risks, "docker_linux_deployment", SOFT_RISK_CONFIG["docker_linux_deployment"])
 
     if _has_any(text, ["部署稳定性", "线上维护", "发布", "稳定性保障"]):
         _add_unique(soft_risks, "deployment_stability_requirement", SOFT_RISK_CONFIG["deployment_stability_requirement"])
 
-    if _has_any(text_lower, ["react", "next", "typescript"]) and _has_any(text, ["必须", "精通", "熟练", "硬要求", "要求"]):
-        _add_unique(soft_risks, "react_next_typescript_hard", SOFT_RISK_CONFIG["react_next_typescript_hard"])
+    for clause in _segments(text):
+        if not _is_negated(clause) and _has_any(clause.lower(), ["react", "next.js", "nextjs", "typescript"]):
+            if _has_any(clause, ["必须", "精通", "熟练", "硬要求"]):
+                _add_unique(soft_risks, "react_next_typescript_hard", SOFT_RISK_CONFIG["react_next_typescript_hard"])
+                break
 
-    if _has_any(text_lower, ["java", "springcloud", "spring cloud", "微服务", "高并发"]):
+    if _has_explicit_java_backend_requirement(text):
         _add_unique(soft_risks, "java_backend_heavy", SOFT_RISK_CONFIG["java_backend_heavy"])
 
-    if _has_any(text, ["后端开发", "后端深度", "全栈", "系统化落地"]) and (has_agent or "AI" in text or "ai" in text_lower):
+    if _has_backend_responsibility(text):
         _add_unique(soft_risks, "backend_heavy", SOFT_RISK_CONFIG["backend_heavy"])
 
     if _has_any(text, ["稳定性", "评估", "监控"]):
@@ -187,7 +314,7 @@ def _detect_soft_risks(jd: Dict, profile: Dict, soft_risks: List[Dict]) -> None:
     if "远程" in text and _has_uncertainty_context(text):
         _add_unique(soft_risks, "remote_work_uncertainty", SOFT_RISK_CONFIG["remote_work_uncertainty"])
 
-    if (has_agent or has_rag) and _has_any(text, ["生产级", "独立", "从0", "从 0", "15-30K", "15-30k"]):
+    if has_production:
         _add_unique(soft_risks, "possible_not_junior_friendly", SOFT_RISK_CONFIG["possible_not_junior_friendly"])
         _add_unique(soft_risks, "agent_keyword_trap", SOFT_RISK_CONFIG["agent_keyword_trap"])
 
@@ -204,6 +331,10 @@ def detect_risks(jd: Dict, profile: Dict) -> Dict:
     for keyword in jd.get("risk_keywords", []):
         risk_kind, risk_type = RISK_KEYWORD_MAP.get(keyword, (None, None))
         if not risk_type:
+            continue
+        if risk_type == "requires_independent_full_agent_framework":
+            continue
+        if not _has_positive_term(text, RISK_CONFIRM_TERMS.get(risk_type, [keyword])):
             continue
         if risk_type == "operation_ratio_high" and _has_any(text, ["运营占比未确认", "运营边界不清"]):
             continue
@@ -227,7 +358,7 @@ def detect_risks(jd: Dict, profile: Dict) -> Dict:
             {"penalty": 3, "reason": f"岗位薪资下限 {salary_min} 低于用户底线 {salary_floor}，需要确认实际 offer。"},
         )
 
-    if _has_any(text, ["独立上手", "独立负责"]) and _has_any(text, ["从0", "从 0", "Agent框架", "Agent 框架"]):
+    if _has_independent_from_zero_agent_requirement(jd):
         _add_unique(hard_risks, "requires_independent_full_agent_framework", HARD_RISK_CONFIG["requires_independent_full_agent_framework"])
 
     _detect_soft_risks(jd, profile, soft_risks)

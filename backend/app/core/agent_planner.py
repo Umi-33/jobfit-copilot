@@ -23,13 +23,11 @@ def _has_production_agent_context(analysis: Dict) -> bool:
     hard_types = _risk_types(analysis.get("hard_risks", []))
     missing_names = {item.get("item") for item in analysis.get("missing_items", [])}
     cap_text = " ".join(analysis.get("cap_reasons", []))
-    parsed_tech = set(analysis.get("parsed_jd", {}).get("tech_keywords", []))
     return bool(
         {"production_agent_heavy", "agent_keyword_trap", "rag_agent_framework_heavy"} & soft_types
         or "requires_independent_full_agent_framework" in hard_types
-        or "生产级 RAG/Agent 工程经验" in missing_names
+        or {"生产级 RAG/Agent 工程经验", "成熟 RAG/Agent 框架经验"} & missing_names
         or "Agent" in cap_text
-        or {"Agent", "RAG", "LangChain"} & parsed_tech
     )
 
 
