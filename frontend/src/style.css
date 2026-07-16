@@ -767,6 +767,14 @@ h3 {
   line-height: 1.65;
 }
 
+.detail-error-actions {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+
 .back-link {
   display: inline-block;
   margin-bottom: 22px;
@@ -808,7 +816,7 @@ h3 {
 .summary-strip {
   margin-bottom: 20px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -832,7 +840,82 @@ h3 {
 }
 
 .summary-strip strong {
+  overflow-wrap: anywhere;
   font-size: 14px;
+}
+
+.status-panel,
+.record-analysis-panel {
+  margin-bottom: 20px;
+  padding: 22px;
+}
+
+.status-controls {
+  padding-top: 18px;
+  display: flex;
+  align-items: end;
+  gap: 14px;
+}
+
+.status-controls label {
+  min-width: min(320px, 100%);
+  display: grid;
+  gap: 8px;
+  color: #34414b;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.status-controls select {
+  min-height: 42px;
+  padding: 9px 36px 9px 12px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid #cbd4d7;
+  border-radius: var(--radius-sm);
+}
+
+.status-controls select:focus {
+  border-color: var(--color-primary);
+  outline: 0;
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.status-panel > .request-error,
+.status-panel > .save-success {
+  margin-top: 14px;
+}
+
+.raw-inputs {
+  display: grid;
+  gap: 14px;
+}
+
+.raw-input-details {
+  padding: 18px 22px;
+}
+
+.raw-input-details summary {
+  cursor: pointer;
+  color: var(--color-text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.raw-input-details pre {
+  max-height: 420px;
+  margin: 16px 0 0;
+  padding: 16px;
+  overflow: auto;
+  color: #34414b;
+  background: var(--color-surface-muted);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.65;
 }
 
 .detail-grid {
@@ -1010,6 +1093,16 @@ h3 {
 
   .secondary-button {
     width: 100%;
+  }
+
+  .status-controls,
+  .detail-error-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .status-controls label {
+    min-width: 0;
   }
 }
 

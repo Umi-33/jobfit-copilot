@@ -51,7 +51,9 @@ async function requestJson(path, options = {}) {
   }
 
   if (!response.ok) {
-    throw new Error(formatErrorDetail(payload?.detail, response.status))
+    const error = new Error(formatErrorDetail(payload?.detail, response.status))
+    error.status = response.status
+    throw error
   }
 
   return payload
@@ -109,4 +111,36 @@ export async function listJobRecords() {
     throw new Error('后端返回的历史记录列表格式不正确。')
   }
   return records
+}
+
+export async function getJobRecord(recordId) {
+  const record = await requestJson(`/records/${recordId}`)
+  if (
+    !isObject(record) ||
+    record.id === undefined ||
+    record.id === null ||
+    !isObject(record.analysis) ||
+    !isObject(record.action_plan)
+  ) {
+    throw new Error('后端返回的记录详情不完整。')
+  }
+  return record
+}
+
+export async function updateJobRecordStatus(recordId, status) {
+  const result = await requestJson(`/records/${recordId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  })
+
+  if (
+    !isObject(result) ||
+    result.id === undefined ||
+    result.id === null ||
+    typeof result.status !== 'string' ||
+    typeof result.updated_at !== 'string'
+  ) {
+    throw new Error('后端返回的状态更新结果不完整。')
+  }
+  return result
 }
