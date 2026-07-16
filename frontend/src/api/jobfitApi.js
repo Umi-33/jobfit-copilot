@@ -102,3 +102,11 @@ export async function createJobRecord({ companyName, jobTitle, city, profileText
   }
   return record
 }
+
+export async function listJobRecords() {
+  const records = await requestJson('/records')
+  if (!Array.isArray(records)) {
+    throw new Error('后端返回的历史记录列表格式不正确。')
+  }
+  return records
+}
