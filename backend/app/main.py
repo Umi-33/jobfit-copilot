@@ -1,10 +1,19 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from .core.agent_planner import plan_next_actions
 from .core.rule_scorer import score_job
+from .llm.interview_prep_generator import (
+    LLMAuthenticationError,
+    LLMConfigurationError,
+    LLMInvalidResponseError,
+    LLMRateLimitError,
+    LLMTimeoutError,
+    LLMUpstreamError,
+    generate_interview_prep,
+)
 from .storage.database import initialize_database, resolve_database_path
 from .storage.job_record_repository import (
     ALLOWED_STATUSES,
@@ -62,6 +71,12 @@ class UpdateJobStatusRequest(BaseModel):
         if value not in ALLOWED_STATUSES:
             raise ValueError("unsupported job record status")
         return value
+
+
+class InterviewPrepRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    human_approved: bool
 
 
 def _run_analysis(profile_text: str, jd_text: str) -> dict:
@@ -135,6 +150,32 @@ def get_record(record_id: int) -> dict:
     if record is None:
         raise HTTPException(status_code=404, detail="job record not found")
     return record
+
+
+@app.post("/api/records/{record_id}/interview-prep")
+def create_interview_prep(record_id: int, payload: InterviewPrepRequest) -> dict:
+    """Generate interview preparation from one human-approved saved snapshot."""
+    if not payload.human_approved:
+        raise HTTPException(status_code=403, detail="human approval is required")
+
+    try:
+        record = get_job_record(record_id, app.state.database_path)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="failed to get job record") from exc
+    if record is None:
+        raise HTTPException(status_code=404, detail="job record not found")
+
+    try:
+        interview_prep = generate_interview_prep(record)
+    except (LLMConfigurationError, LLMAuthenticationError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except LLMRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except LLMTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except (LLMUpstreamError, LLMInvalidResponseError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"record_id": record_id, "interview_prep": interview_prep}
 
 
 @app.patch("/api/records/{record_id}/status")
