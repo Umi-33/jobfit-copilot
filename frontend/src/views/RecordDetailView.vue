@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { getJobRecord, updateJobRecordStatus } from '../api/jobfitApi'
 import AnalysisSummary from '../components/AnalysisSummary.vue'
+import InterviewPrepPanel from '../components/InterviewPrepPanel.vue'
 
 const props = defineProps({
   id: {
@@ -228,6 +229,8 @@ watch(() => props.id, loadRecord, { immediate: true })
         </div>
         <AnalysisSummary :analysis="record.analysis" :action-plan="record.action_plan" />
       </section>
+
+      <InterviewPrepPanel :record-id="record.id" />
 
       <section class="raw-inputs" aria-label="原始输入">
         <details class="panel raw-input-details">

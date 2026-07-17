@@ -12,6 +12,10 @@ function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
+function isStringArray(value) {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+}
+
 function formatErrorDetail(detail, status) {
   if (typeof detail === 'string') return detail
 
@@ -142,5 +146,47 @@ export async function updateJobRecordStatus(recordId, status) {
   ) {
     throw new Error('后端返回的状态更新结果不完整。')
   }
+  return result
+}
+
+export async function generateInterviewPrep(recordId) {
+  const result = await requestJson(`/records/${recordId}/interview-prep`, {
+    method: 'POST',
+    body: JSON.stringify({
+      human_approved: true,
+    }),
+  })
+
+  const prep = result?.interview_prep
+  const validQuestions = Array.isArray(prep?.likely_questions) && prep.likely_questions.every(
+    (item) =>
+      isObject(item) &&
+      typeof item.question === 'string' &&
+      item.question.trim().length > 0 &&
+      isStringArray(item.answer_outline),
+  )
+  const validProjects =
+    Array.isArray(prep?.project_talking_points) &&
+    prep.project_talking_points.every(
+      (item) =>
+        isObject(item) &&
+        typeof item.project_name === 'string' &&
+        item.project_name.trim().length > 0 &&
+        isStringArray(item.talking_points),
+    )
+
+  if (
+    !isObject(result) ||
+    result.record_id !== recordId ||
+    !isObject(prep) ||
+    !isStringArray(prep.job_focus) ||
+    !validQuestions ||
+    !validProjects ||
+    !isStringArray(prep.honest_boundaries) ||
+    !isStringArray(prep.questions_to_ask)
+  ) {
+    throw new Error('后端返回的面试准备结果不完整。')
+  }
+
   return result
 }
