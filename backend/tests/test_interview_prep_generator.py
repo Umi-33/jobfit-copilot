@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from types import SimpleNamespace
@@ -29,14 +30,14 @@ def record_fixture(projects=None):
         "analysis": {
             "total_score": 76,
             "rating": "A-",
-            "decision": "可投但需确认",
+            "decision": "Apply after confirmation",
             "risk_level": "low",
             "parsed_profile": {"projects": projects or []},
         },
         "action_plan": {
             "human_approval_required": True,
-            "allowed_outputs": ["整理面试准备要点"],
-            "blocked_outputs": ["不能编造技能、项目或经历"],
+            "allowed_outputs": ["Prepare interview talking points"],
+            "blocked_outputs": ["Do not invent skills, projects, or experience"],
             "human_checkpoints": [{"id": "confirm_before_action"}],
         },
     }
@@ -45,17 +46,39 @@ def record_fixture(projects=None):
 def prep_payload(project_name=None):
     projects = []
     if project_name:
-        projects.append({"project_name": project_name, "talking_points": ["Use saved facts"]})
+        projects.append(
+            {
+                "project_name": project_name,
+                "talking_points": ["Use saved facts", "Explain the design", "State boundaries"],
+            }
+        )
     return {
-        "job_focus": ["Focus one", "Focus two", "Focus three"],
+        "job_focus": ["Focus one", "Focus two", "Focus three", "Focus four"],
         "likely_questions": [
-            {"question": f"Question {index}", "answer_outline": ["Point one", "Point two"]}
-            for index in range(1, 5)
+            {
+                "question": f"Question {index}",
+                "answer_outline": ["Point one", "Point two", "Point three"],
+            }
+            for index in range(1, 6)
         ],
         "project_talking_points": projects,
-        "honest_boundaries": ["Boundary one", "Boundary two"],
-        "questions_to_ask": ["Ask one", "Ask two", "Ask three"],
+        "honest_boundaries": ["Boundary one", "Boundary two", "Boundary three"],
+        "questions_to_ask": ["Ask one", "Ask two", "Ask three", "Ask four"],
     }
+
+
+def assert_strict_objects(test_case, schema):
+    """Assert every object rejects extras and requires every declared property."""
+    if isinstance(schema, dict):
+        if schema.get("type") == "object":
+            properties = schema.get("properties", {})
+            test_case.assertIs(schema.get("additionalProperties"), False)
+            test_case.assertEqual(set(schema.get("required", [])), set(properties))
+        for value in schema.values():
+            assert_strict_objects(test_case, value)
+    elif isinstance(schema, list):
+        for value in schema:
+            assert_strict_objects(test_case, value)
 
 
 class InterviewPrepGeneratorTests(unittest.TestCase):
@@ -63,81 +86,182 @@ class InterviewPrepGeneratorTests(unittest.TestCase):
         self.environment = patch.dict(
             os.environ,
             {
-                "OPENAI_API_KEY": "test-key-never-sent",
-                "OPENAI_MODEL": "configured-test-model",
-                "OPENAI_TIMEOUT_SECONDS": "12",
+                "GROQ_API_KEY": "test-key-never-sent",
+                "GROQ_MODEL": "configured-test-model",
+                "GROQ_TIMEOUT_SECONDS": "12",
             },
-            clear=False,
+            clear=True,
         )
         self.environment.start()
 
     def tearDown(self):
         self.environment.stop()
 
-    def mock_client(self, output):
+    def mock_client(self, content):
         client = MagicMock()
-        client.responses.parse.return_value = SimpleNamespace(output_parsed=output)
+        message = SimpleNamespace(content=content)
+        client.chat.completions.create.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=message)]
+        )
         return client
 
     @patch("backend.app.llm.interview_prep_generator.OpenAI")
-    def test_success_uses_responses_parse_store_false_and_saved_input(self, openai_class):
+    def test_success_uses_groq_chat_completions_and_strict_schema(self, openai_class):
         record = record_fixture([{"name": "JobFit Copilot", "tags": [], "summary": "Saved"}])
-        parsed = InterviewPrep.model_validate(prep_payload("JobFit, Copilot"))
-        client = self.mock_client(parsed)
+        client = self.mock_client(json.dumps(prep_payload("JobFit, Copilot")))
         openai_class.return_value = client
 
         result = generate_interview_prep(record)
 
         self.assertEqual(result["project_talking_points"][0]["project_name"], "JobFit Copilot")
-        openai_class.assert_called_once_with(api_key="test-key-never-sent", timeout=12.0)
-        call = client.responses.parse.call_args.kwargs
+        openai_class.assert_called_once_with(
+            api_key="test-key-never-sent",
+            base_url="https://api.groq.com/openai/v1",
+            timeout=12.0,
+        )
+        client.chat.completions.create.assert_called_once()
+        call = client.chat.completions.create.call_args.kwargs
         self.assertEqual(call["model"], "configured-test-model")
-        self.assertIs(call["text_format"], InterviewPrep)
-        self.assertIs(call["store"], False)
-        self.assertIn("UNTRUSTED PROFILE TEXT", call["input"])
-        self.assertIn("UNTRUSTED JD TEXT", call["input"])
-        self.assertIn("不能编造技能、项目或经历", call["input"])
+        self.assertIs(call["stream"], False)
+        self.assertNotIn("store", call)
+        self.assertEqual([message["role"] for message in call["messages"]], ["system", "user"])
+        self.assertIn("UNTRUSTED PROFILE TEXT", call["messages"][1]["content"])
+        self.assertIn("UNTRUSTED JD TEXT", call["messages"][1]["content"])
+        self.assertIn("Do not invent skills, projects, or experience", call["messages"][1]["content"])
+        instructions = call["messages"][0]["content"]
+        self.assertIn("job_focus must contain exactly 4", instructions)
+        self.assertIn("likely_questions must contain exactly 5", instructions)
+        self.assertIn("answer_outline", instructions)
+        self.assertIn("exactly 3 distinct points", instructions)
+        self.assertIn("honest_boundaries must contain exactly 3", instructions)
+        self.assertIn("questions_to_ask must contain exactly 4", instructions)
+        self.assertIn("analysis.unknown_items", instructions)
+        self.assertIn("human_checkpoints", instructions)
+        self.assertIn("job_focus item in Simplified Chinese", instructions)
+        self.assertIn("likely_questions are questions an interviewer may ask the candidate", instructions)
+        self.assertIn("Never put candidate-to-company questions", instructions)
+        self.assertIn("Every answer_outline is a first-person answer plan", instructions)
+        self.assertIn("Never answer on behalf of the company", instructions)
+        self.assertIn("training, technical sharing", instructions)
+        self.assertIn("work schedules, promotion opportunities", instructions)
+        self.assertIn("questions_to_ask are questions the candidate may ask", instructions)
+        self.assertIn("Do not mix these questions into likely_questions", instructions)
+        self.assertEqual(call["response_format"]["type"], "json_schema")
+        json_schema = call["response_format"]["json_schema"]
+        self.assertIs(json_schema["strict"], True)
+        provider_schema = json_schema["schema"]
+        assert_strict_objects(self, provider_schema)
+        properties = provider_schema["properties"]
+        self.assertIn("exactly 4", properties["job_focus"]["description"])
+        self.assertIn("exactly 5", properties["likely_questions"]["description"])
+        self.assertIn(
+            "exactly 3",
+            properties["likely_questions"]["items"]["properties"]["answer_outline"][
+                "description"
+            ],
+        )
+        self.assertIn("exactly 3", properties["honest_boundaries"]["description"])
+        self.assertIn("exactly 4", properties["questions_to_ask"]["description"])
+        self.assertIn("non-repeated", properties["questions_to_ask"]["description"])
+        self.assertIn("allowed real projects", properties["project_talking_points"]["description"])
 
-    def test_missing_configuration_is_rejected_before_client_creation(self):
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "", "OPENAI_MODEL": ""}):
+    def test_missing_groq_api_key_is_rejected_without_openai_fallback(self):
+        with patch.dict(
+            os.environ,
+            {"GROQ_API_KEY": "", "OPENAI_API_KEY": "old-key-must-not-be-used"},
+            clear=False,
+        ):
+            with patch("backend.app.llm.interview_prep_generator.OpenAI") as openai_class:
+                with self.assertRaises(LLMConfigurationError):
+                    generate_interview_prep(record_fixture())
+                openai_class.assert_not_called()
+
+    def test_missing_groq_model_is_rejected_without_openai_fallback(self):
+        with patch.dict(
+            os.environ,
+            {"GROQ_MODEL": "", "OPENAI_MODEL": "old-model-must-not-be-used"},
+            clear=False,
+        ):
             with patch("backend.app.llm.interview_prep_generator.OpenAI") as openai_class:
                 with self.assertRaises(LLMConfigurationError):
                     generate_interview_prep(record_fixture())
                 openai_class.assert_not_called()
 
     @patch("backend.app.llm.interview_prep_generator.OpenAI")
-    def test_refusal_or_empty_output_is_rejected(self, openai_class):
-        openai_class.return_value = self.mock_client(None)
-        with self.assertRaises(LLMInvalidResponseError):
-            generate_interview_prep(record_fixture())
+    def test_empty_content_is_rejected(self, openai_class):
+        for content in (None, "", "   "):
+            with self.subTest(content=repr(content)):
+                openai_class.return_value = self.mock_client(content)
+                with self.assertLogs(
+                    "backend.app.llm.interview_prep_generator", level="WARNING"
+                ) as logs:
+                    with self.assertRaises(LLMInvalidResponseError):
+                        generate_interview_prep(record_fixture())
+                self.assertIn("interview_prep_invalid_stage=empty_content", logs.output[0])
 
     @patch("backend.app.llm.interview_prep_generator.OpenAI")
-    def test_structurally_invalid_output_is_rejected(self, openai_class):
-        openai_class.return_value = self.mock_client({"job_focus": ["too short"]})
-        with self.assertRaises(LLMInvalidResponseError):
-            generate_interview_prep(record_fixture())
+    def test_missing_choices_is_logged_as_response_shape(self, openai_class):
+        client = MagicMock()
+        client.chat.completions.create.return_value = SimpleNamespace(choices=[])
+        openai_class.return_value = client
+        with self.assertLogs(
+            "backend.app.llm.interview_prep_generator", level="WARNING"
+        ) as logs:
+            with self.assertRaises(LLMInvalidResponseError):
+                generate_interview_prep(record_fixture())
+        self.assertIn("interview_prep_invalid_stage=response_shape", logs.output[0])
+
+    @patch("backend.app.llm.interview_prep_generator.OpenAI")
+    def test_invalid_json_is_rejected(self, openai_class):
+        openai_class.return_value = self.mock_client("not-json")
+        with self.assertLogs(
+            "backend.app.llm.interview_prep_generator", level="WARNING"
+        ) as logs:
+            with self.assertRaises(LLMInvalidResponseError):
+                generate_interview_prep(record_fixture())
+        self.assertIn("interview_prep_invalid_stage=json_decode", logs.output[0])
+
+    @patch("backend.app.llm.interview_prep_generator.OpenAI")
+    def test_json_that_fails_pydantic_is_rejected(self, openai_class):
+        invalid_payload = prep_payload()
+        invalid_payload["questions_to_ask"] = ["Only one", "Only two"]
+        openai_class.return_value = self.mock_client(json.dumps(invalid_payload))
+        with self.assertLogs(
+            "backend.app.llm.interview_prep_generator", level="WARNING"
+        ) as logs:
+            with self.assertRaises(LLMInvalidResponseError):
+                generate_interview_prep(record_fixture())
+        self.assertIn("interview_prep_invalid_stage=pydantic_validation", logs.output[0])
+        self.assertIn("questions_to_ask:too_short", logs.output[0])
+        self.assertNotIn("Only one", logs.output[0])
 
     @patch("backend.app.llm.interview_prep_generator.OpenAI")
     def test_invented_project_is_rejected(self, openai_class):
-        parsed = InterviewPrep.model_validate(prep_payload("Invented Project"))
-        openai_class.return_value = self.mock_client(parsed)
+        openai_class.return_value = self.mock_client(json.dumps(prep_payload("Invented Project")))
         record = record_fixture([{"name": "Real Project", "tags": [], "summary": "Saved"}])
-        with self.assertRaises(LLMInvalidResponseError):
-            generate_interview_prep(record)
+        with self.assertLogs(
+            "backend.app.llm.interview_prep_generator", level="WARNING"
+        ) as logs:
+            with self.assertRaises(LLMInvalidResponseError):
+                generate_interview_prep(record)
+        self.assertIn("interview_prep_invalid_stage=project_whitelist", logs.output[0])
+        self.assertIn("project_whitelist_mismatch", logs.output[0])
+        self.assertNotIn("Invented Project", logs.output[0])
 
     @patch("backend.app.llm.interview_prep_generator.OpenAI")
     def test_no_saved_projects_requires_empty_talking_points(self, openai_class):
-        openai_class.return_value = self.mock_client(
-            InterviewPrep.model_validate(prep_payload("Invented Project"))
-        )
-        with self.assertRaises(LLMInvalidResponseError):
-            generate_interview_prep(record_fixture())
+        openai_class.return_value = self.mock_client(json.dumps(prep_payload("Invented Project")))
+        with self.assertLogs(
+            "backend.app.llm.interview_prep_generator", level="WARNING"
+        ):
+            with self.assertRaises(LLMInvalidResponseError):
+                generate_interview_prep(record_fixture())
 
-        openai_class.return_value = self.mock_client(InterviewPrep.model_validate(prep_payload()))
+        openai_class.return_value = self.mock_client(json.dumps(prep_payload()))
         result = generate_interview_prep(record_fixture())
         self.assertEqual(result["project_talking_points"], [])
 
-    def test_output_model_rejects_extra_fields_and_invalid_counts(self):
+    def test_local_output_model_keeps_full_constraints(self):
         with self.assertRaises(ValidationError):
             InterviewPrep.model_validate({**prep_payload(), "extra": "not allowed"})
         with self.assertRaises(ValidationError):
@@ -156,7 +280,7 @@ class InterviewPrepGeneratorTests(unittest.TestCase):
         for provider_error, domain_error in cases:
             with self.subTest(error=type(provider_error).__name__):
                 client = MagicMock()
-                client.responses.parse.side_effect = provider_error
+                client.chat.completions.create.side_effect = provider_error
                 openai_class.return_value = client
                 with self.assertRaises(domain_error):
                     generate_interview_prep(record_fixture())
