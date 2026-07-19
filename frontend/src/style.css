@@ -63,6 +63,97 @@ a {
   height: 100%;
 }
 
+.app-root {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.app-root > .app-shell {
+  height: auto;
+  min-height: 0;
+}
+
+.demo-environment-notice {
+  min-height: 48px;
+  margin-left: var(--sidebar-width);
+  padding: 10px 24px;
+  display: flex;
+  align-items: center;
+  color: #6e420e;
+  background: var(--color-warning-soft);
+  border-bottom: 1px solid #edc990;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 650;
+  line-height: 1.55;
+}
+
+.demo-access-page {
+  height: 100%;
+  padding: 24px;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  background:
+    linear-gradient(135deg, rgba(24, 115, 91, 0.12), transparent 48%),
+    var(--color-bg);
+}
+
+.demo-access-card {
+  width: min(460px, 100%);
+  padding: 32px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-panel);
+}
+
+.demo-access-description,
+.demo-access-help {
+  color: var(--color-text-muted);
+  line-height: 1.65;
+}
+
+.demo-access-form {
+  margin-top: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.demo-access-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.demo-access-form input {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  color: var(--color-text);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  outline: none;
+}
+
+.demo-access-form input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-soft);
+}
+
+.demo-access-help {
+  margin: 16px 0 0;
+  font-size: 12px;
+}
+
+.demo-access-card > .request-error {
+  margin-top: 16px;
+}
+
 .sidebar {
   position: fixed;
   inset: 0 auto 0 0;
@@ -1145,6 +1236,11 @@ h3 {
 }
 
 @media (max-width: 720px) {
+  .demo-environment-notice {
+    margin-left: 0;
+    padding: 10px 16px;
+  }
+
   .app-shell {
     display: flex;
     flex-direction: column;
@@ -1245,6 +1341,14 @@ h3 {
 }
 
 @media (max-width: 460px) {
+  .demo-access-page {
+    padding: 16px;
+  }
+
+  .demo-access-card {
+    padding: 24px 20px;
+  }
+
   .sidebar {
     align-items: flex-start;
     flex-direction: column;

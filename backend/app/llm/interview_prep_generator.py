@@ -8,6 +8,7 @@ from openai import (
     APIConnectionError,
     APITimeoutError,
     AuthenticationError as OpenAIAuthenticationError,
+    InternalServerError as OpenAIInternalServerError,
     OpenAI,
     OpenAIError,
     RateLimitError as OpenAIRateLimitError,
@@ -210,43 +211,8 @@ def _provider_schema() -> Dict:
     }
 
 
-def generate_interview_prep(record: Dict) -> Dict:
-    """Generate and validate interview preparation without changing saved analysis."""
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
-    model = os.getenv("GROQ_MODEL", "").strip()
-    if not api_key or not model:
-        raise LLMConfigurationError("LLM service is not configured")
-
-    client = OpenAI(
-        api_key=api_key,
-        base_url="https://api.groq.com/openai/v1",
-        timeout=_timeout_seconds(),
-    )
-    try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": INTERVIEW_PREP_INSTRUCTIONS},
-                {"role": "user", "content": build_interview_prep_input(record)},
-            ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "interview_prep",
-                    "strict": True,
-                    "schema": _provider_schema(),
-                },
-            },
-            stream=False,
-        )
-    except OpenAIAuthenticationError as exc:
-        raise LLMAuthenticationError("LLM service authentication failed") from exc
-    except OpenAIRateLimitError as exc:
-        raise LLMRateLimitError("LLM service is temporarily rate limited") from exc
-    except APITimeoutError as exc:
-        raise LLMTimeoutError("LLM service timed out") from exc
-    except (APIConnectionError, OpenAIError) as exc:
-        raise LLMUpstreamError("LLM service request failed") from exc
+def _parse_interview_prep_response(response, record: Dict) -> Dict:
+    """Validate one provider response without logging any provider content."""
     try:
         choices = response.choices
         if not choices:
@@ -279,3 +245,67 @@ def generate_interview_prep(record: Dict) -> Dict:
 
     parsed = _validate_project_names(parsed, record)
     return parsed.model_dump()
+
+
+def generate_interview_prep(record: Dict) -> Dict:
+    """Generate interview preparation with at most one controlled retry."""
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    model = os.getenv("GROQ_MODEL", "").strip()
+    if not api_key or not model:
+        raise LLMConfigurationError("LLM service is not configured")
+
+    client = OpenAI(
+        api_key=api_key,
+        base_url="https://api.groq.com/openai/v1",
+        timeout=_timeout_seconds(),
+    )
+    request_options = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": INTERVIEW_PREP_INSTRUCTIONS},
+            {"role": "user", "content": build_interview_prep_input(record)},
+        ],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "interview_prep",
+                "strict": True,
+                "schema": _provider_schema(),
+            },
+        },
+        "stream": False,
+    }
+
+    for attempt in range(1, 3):
+        try:
+            response = client.chat.completions.create(**request_options)
+        except OpenAIAuthenticationError as exc:
+            raise LLMAuthenticationError("LLM service authentication failed") from exc
+        except OpenAIRateLimitError as exc:
+            raise LLMRateLimitError("LLM service is temporarily rate limited") from exc
+        except APITimeoutError as exc:
+            # APITimeoutError inherits APIConnectionError in the installed SDK,
+            # but timeouts retain their existing one-attempt 504 semantics.
+            raise LLMTimeoutError("LLM service timed out") from exc
+        except (APIConnectionError, OpenAIInternalServerError) as exc:
+            if attempt < 2:
+                logger.warning(
+                    "interview_prep_retry attempt=2 reason=temporary_upstream"
+                )
+                continue
+            raise LLMUpstreamError("LLM service request failed") from exc
+        except OpenAIError as exc:
+            raise LLMUpstreamError("LLM service request failed") from exc
+
+        try:
+            return _parse_interview_prep_response(response, record)
+        except LLMInvalidResponseError:
+            if attempt < 2:
+                logger.warning(
+                    "interview_prep_retry attempt=2 reason=invalid_response"
+                )
+                continue
+            raise
+
+    # The bounded loop either returns or raises on its second attempt.
+    raise LLMUpstreamError("LLM service request failed")

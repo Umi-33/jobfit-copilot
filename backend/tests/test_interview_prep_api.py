@@ -1,8 +1,10 @@
+import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -103,6 +105,48 @@ class InterviewPrepApiTests(unittest.TestCase):
         self.assertEqual(supplied_record["analysis"], self.record["analysis"])
         self.assertEqual(supplied_record["action_plan"], self.record["action_plan"])
 
+    @patch("backend.app.llm.interview_prep_generator.OpenAI")
+    def test_invalid_first_provider_response_retries_and_api_succeeds(self, openai_class):
+        invalid_prep = json.loads(json.dumps(VALID_PREP))
+        invalid_prep["questions_to_ask"] = ["Too few questions"]
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(message=SimpleNamespace(content=json.dumps(invalid_prep)))
+                ]
+            ),
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(message=SimpleNamespace(content=json.dumps(VALID_PREP)))
+                ]
+            ),
+        ]
+        openai_class.return_value = client
+
+        with patch.dict(
+            os.environ,
+            {
+                "GROQ_API_KEY": "api-test-key-never-sent",
+                "GROQ_MODEL": "api-test-model",
+                "GROQ_TIMEOUT_SECONDS": "5",
+            },
+        ):
+            with self.assertLogs(
+                "backend.app.llm.interview_prep_generator", level="WARNING"
+            ):
+                response = self.client.post(
+                    self.endpoint(),
+                    json={"human_approved": True},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"record_id": self.record["id"], "interview_prep": VALID_PREP},
+        )
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+
     @patch("backend.app.main.generate_interview_prep")
     def test_human_approval_is_required(self, generator):
         self.assertEqual(self.client.post(self.endpoint(), json={}).status_code, 422)
@@ -156,4 +200,3 @@ class InterviewPrepApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

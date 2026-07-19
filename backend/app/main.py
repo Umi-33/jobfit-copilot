@@ -1,7 +1,13 @@
 from contextlib import asynccontextmanager
+import hmac
+import os
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, field_validator
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from .core.agent_planner import plan_next_actions
 from .core.rule_scorer import score_job
@@ -34,6 +40,61 @@ async def lifespan(application: FastAPI):
 
 
 app = FastAPI(title="Jobfit Copilot API", version="1.5.0", lifespan=lifespan)
+
+LOCAL_FRONTEND_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+)
+DEMO_ACCESS_HEADER = "X-Demo-Access-Code"
+
+
+def _frontend_origins() -> list[str]:
+    """Return exact configured origins plus the two local development origins."""
+    configured_origins = os.getenv("FRONTEND_ORIGINS", "").split(",")
+    origins = [*LOCAL_FRONTEND_ORIGINS]
+    for value in configured_origins:
+        origin = value.strip().rstrip("/")
+        if origin and origin != "*" and origin not in origins:
+            origins.append(origin)
+    return origins
+
+
+class DemoAccessMiddleware(BaseHTTPMiddleware):
+    """Optionally protect API routes with one server-side demo access code."""
+
+    async def dispatch(self, request: Request, call_next):
+        expected_code = os.getenv("DEMO_ACCESS_CODE", "").strip()
+        path = request.url.path
+        is_api_path = path == "/api" or path.startswith("/api/")
+        is_public_health = request.method == "GET" and path == "/api/health"
+
+        if (
+            not expected_code
+            or not is_api_path
+            or is_public_health
+            or request.method == "OPTIONS"
+        ):
+            return await call_next(request)
+
+        supplied_code = request.headers.get(DEMO_ACCESS_HEADER, "")
+        if not hmac.compare_digest(supplied_code, expected_code):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Demo access code required or invalid"},
+            )
+        return await call_next(request)
+
+
+# Add the access middleware first so CORS remains the outer layer and also
+# applies to access-denied responses from allowed browser origins.
+app.add_middleware(DemoAccessMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_frontend_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Content-Type", DEMO_ACCESS_HEADER],
+)
 
 
 class AnalyzeRequest(BaseModel):
@@ -91,6 +152,12 @@ def _run_analysis(profile_text: str, jd_text: str) -> dict:
 @app.get("/api/health")
 def health() -> dict:
     """Return a minimal service health check."""
+    return {"status": "ok"}
+
+
+@app.get("/api/access-check")
+def access_check() -> dict:
+    """Confirm that optional demo access middleware accepted the request."""
     return {"status": "ok"}
 
 

@@ -1,4 +1,14 @@
-const API_PREFIX = '/api'
+import {
+  clearDemoAccessCode,
+  getDemoAccessCode,
+  isDemoAccessRequired,
+} from '../utils/demoAccess'
+
+const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '')
+  .trim()
+  .replace(/\/+$/, '')
+const API_PREFIX = API_BASE_URL ? `${API_BASE_URL}/api` : '/api'
+const DEMO_ACCESS_HEADER = 'X-Demo-Access-Code'
 
 const FIELD_LABELS = {
   company_name: '公司名称',
@@ -34,17 +44,22 @@ function formatErrorDetail(detail, status) {
 
 async function requestJson(path, options = {}) {
   let response
+  const demoAccessCode = getDemoAccessCode()
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  }
+  if (demoAccessCode && !headers[DEMO_ACCESS_HEADER]) {
+    headers[DEMO_ACCESS_HEADER] = demoAccessCode
+  }
 
   try {
     response = await fetch(`${API_PREFIX}${path}`, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
+      headers,
     })
   } catch {
-    throw new Error('无法连接后端服务，请确认 FastAPI 已在 127.0.0.1:8000 启动。')
+    throw new Error('无法连接后端服务，请稍后重试。')
   }
 
   let payload = null
@@ -55,6 +70,9 @@ async function requestJson(path, options = {}) {
   }
 
   if (!response.ok) {
+    if (response.status === 401 && isDemoAccessRequired()) {
+      clearDemoAccessCode({ notify: true })
+    }
     const error = new Error(formatErrorDetail(payload?.detail, response.status))
     error.status = response.status
     throw error
@@ -74,6 +92,18 @@ export async function checkHealth() {
   const payload = await requestJson('/health')
   if (payload?.status !== 'ok') {
     throw new Error('后端健康检查返回异常。')
+  }
+  return payload
+}
+
+export async function checkDemoAccess(code) {
+  const payload = await requestJson('/access-check', {
+    headers: {
+      [DEMO_ACCESS_HEADER]: code,
+    },
+  })
+  if (payload?.status !== 'ok') {
+    throw new Error('演示访问检查返回异常。')
   }
   return payload
 }

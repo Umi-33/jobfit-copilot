@@ -5,7 +5,13 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import httpx
-from openai import APIConnectionError, APITimeoutError, AuthenticationError, RateLimitError
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    AuthenticationError,
+    InternalServerError,
+    RateLimitError,
+)
 from pydantic import ValidationError
 
 from backend.app.llm.interview_prep_generator import (
@@ -99,11 +105,12 @@ class InterviewPrepGeneratorTests(unittest.TestCase):
 
     def mock_client(self, content):
         client = MagicMock()
-        message = SimpleNamespace(content=content)
-        client.chat.completions.create.return_value = SimpleNamespace(
-            choices=[SimpleNamespace(message=message)]
-        )
+        client.chat.completions.create.return_value = self.mock_response(content)
         return client
+
+    def mock_response(self, content):
+        message = SimpleNamespace(content=content)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
     @patch("backend.app.llm.interview_prep_generator.OpenAI")
     def test_success_uses_groq_chat_completions_and_strict_schema(self, openai_class):
@@ -164,6 +171,146 @@ class InterviewPrepGeneratorTests(unittest.TestCase):
         self.assertIn("exactly 4", properties["questions_to_ask"]["description"])
         self.assertIn("non-repeated", properties["questions_to_ask"]["description"])
         self.assertIn("allowed real projects", properties["project_talking_points"]["description"])
+
+    @patch("backend.app.llm.interview_prep_generator.OpenAI")
+    def test_pydantic_invalid_response_retries_once_then_succeeds(self, openai_class):
+        invalid_payload = prep_payload()
+        invalid_payload["questions_to_ask"] = ["Too few", "Still too few"]
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            self.mock_response(json.dumps(invalid_payload)),
+            self.mock_response(json.dumps(prep_payload())),
+        ]
+        openai_class.return_value = client
+
+        with self.assertLogs(
+            "backend.app.llm.interview_prep_generator", level="WARNING"
+        ) as logs:
+            result = generate_interview_prep(record_fixture())
+
+        self.assertEqual(result, prep_payload())
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertIn(
+            "interview_prep_retry attempt=2 reason=invalid_response",
+            "\n".join(logs.output),
+        )
+
+    @patch("backend.app.llm.interview_prep_generator.OpenAI")
+    def test_project_whitelist_failure_retries_and_keeps_saved_name(self, openai_class):
+        record = record_fixture(
+            [{"name": "Real Project", "tags": [], "summary": "Saved project"}]
+        )
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            self.mock_response(json.dumps(prep_payload("Invented Project"))),
+            self.mock_response(json.dumps(prep_payload("Real, Project"))),
+        ]
+        openai_class.return_value = client
+
+        with self.assertLogs(
+            "backend.app.llm.interview_prep_generator", level="WARNING"
+        ):
+            result = generate_interview_prep(record)
+
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+        self.assertEqual(
+            result["project_talking_points"][0]["project_name"],
+            "Real Project",
+        )
+
+    @patch("backend.app.llm.interview_prep_generator.OpenAI")
+    def test_two_invalid_responses_stop_after_second_attempt(self, openai_class):
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            self.mock_response("first-invalid-json"),
+            self.mock_response("second-invalid-json"),
+        ]
+        openai_class.return_value = client
+
+        with self.assertLogs(
+            "backend.app.llm.interview_prep_generator", level="WARNING"
+        ):
+            with self.assertRaises(LLMInvalidResponseError):
+                generate_interview_prep(record_fixture())
+
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+
+    @patch("backend.app.llm.interview_prep_generator.OpenAI")
+    def test_temporary_upstream_error_retries_once_then_succeeds(self, openai_class):
+        request = httpx.Request("POST", "https://example.invalid")
+        server_response = httpx.Response(500, request=request)
+        temporary_errors = [
+            APIConnectionError(request=request),
+            InternalServerError("temporary server error", response=server_response, body=None),
+        ]
+
+        for temporary_error in temporary_errors:
+            with self.subTest(error=type(temporary_error).__name__):
+                client = MagicMock()
+                client.chat.completions.create.side_effect = [
+                    temporary_error,
+                    self.mock_response(json.dumps(prep_payload())),
+                ]
+                openai_class.return_value = client
+
+                with self.assertLogs(
+                    "backend.app.llm.interview_prep_generator", level="WARNING"
+                ) as logs:
+                    result = generate_interview_prep(record_fixture())
+
+                self.assertEqual(result, prep_payload())
+                self.assertEqual(client.chat.completions.create.call_count, 2)
+                self.assertIn(
+                    "interview_prep_retry attempt=2 reason=temporary_upstream",
+                    "\n".join(logs.output),
+                )
+
+    @patch("backend.app.llm.interview_prep_generator.OpenAI")
+    def test_two_temporary_upstream_errors_keep_upstream_error(self, openai_class):
+        request = httpx.Request("POST", "https://example.invalid")
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            APIConnectionError(request=request),
+            APIConnectionError(request=request),
+        ]
+        openai_class.return_value = client
+
+        with self.assertLogs(
+            "backend.app.llm.interview_prep_generator", level="WARNING"
+        ):
+            with self.assertRaises(LLMUpstreamError):
+                generate_interview_prep(record_fixture())
+
+        self.assertEqual(client.chat.completions.create.call_count, 2)
+
+    @patch("backend.app.llm.interview_prep_generator.OpenAI")
+    def test_retry_logs_do_not_include_sensitive_values(self, openai_class):
+        sensitive_model_output = "MODEL_OUTPUT_MUST_NOT_BE_LOGGED"
+        sensitive_profile = "PROFILE_TEXT_MUST_NOT_BE_LOGGED"
+        sensitive_jd = "JD_TEXT_MUST_NOT_BE_LOGGED"
+        sensitive_demo_code = "DEMO_CODE_MUST_NOT_BE_LOGGED"
+        record = record_fixture()
+        record["profile_snapshot"] = sensitive_profile
+        record["jd_text"] = sensitive_jd
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            self.mock_response(sensitive_model_output),
+            self.mock_response(json.dumps(prep_payload())),
+        ]
+        openai_class.return_value = client
+
+        with patch.dict(os.environ, {"DEMO_ACCESS_CODE": sensitive_demo_code}):
+            with self.assertLogs(
+                "backend.app.llm.interview_prep_generator", level="WARNING"
+            ) as logs:
+                generate_interview_prep(record)
+
+        log_text = "\n".join(logs.output)
+        self.assertNotIn(sensitive_model_output, log_text)
+        self.assertNotIn(sensitive_profile, log_text)
+        self.assertNotIn(sensitive_jd, log_text)
+        self.assertNotIn("test-key-never-sent", log_text)
+        self.assertNotIn(sensitive_demo_code, log_text)
 
     def test_missing_groq_api_key_is_rejected_without_openai_fallback(self):
         with patch.dict(
@@ -272,18 +419,23 @@ class InterviewPrepGeneratorTests(unittest.TestCase):
         request = httpx.Request("POST", "https://example.invalid")
         response = httpx.Response(401, request=request)
         cases = [
-            (AuthenticationError("bad auth", response=response, body=None), LLMAuthenticationError),
-            (RateLimitError("limited", response=response, body=None), LLMRateLimitError),
-            (APITimeoutError(request), LLMTimeoutError),
-            (APIConnectionError(request=request), LLMUpstreamError),
+            (
+                AuthenticationError("bad auth", response=response, body=None),
+                LLMAuthenticationError,
+                1,
+            ),
+            (RateLimitError("limited", response=response, body=None), LLMRateLimitError, 1),
+            (APITimeoutError(request), LLMTimeoutError, 1),
+            (APIConnectionError(request=request), LLMUpstreamError, 2),
         ]
-        for provider_error, domain_error in cases:
+        for provider_error, domain_error, expected_calls in cases:
             with self.subTest(error=type(provider_error).__name__):
                 client = MagicMock()
                 client.chat.completions.create.side_effect = provider_error
                 openai_class.return_value = client
                 with self.assertRaises(domain_error):
                     generate_interview_prep(record_fixture())
+                self.assertEqual(client.chat.completions.create.call_count, expected_calls)
 
 
 if __name__ == "__main__":
