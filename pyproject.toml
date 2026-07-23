@@ -1,0 +1,11 @@
+[project]
+name = "jobfit-copilot"
+version = "0.1.0"
+requires-python = "==3.11.*"
+dependencies = [
+    "fastapi[standard]",
+    "openai",
+]
+
+[tool.fastapi]
+entrypoint = "backend.app.main:app"
