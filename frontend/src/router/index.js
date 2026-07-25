@@ -1,10 +1,15 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router'
 import AnalyzeView from '../views/AnalyzeView.vue'
 import RecordDetailView from '../views/RecordDetailView.vue'
 import RecordsView from '../views/RecordsView.vue'
 
+const history =
+  import.meta.env.VITE_ROUTER_MODE === 'hash'
+    ? createWebHashHistory()
+    : createWebHistory()
+
 const router = createRouter({
-  history: createWebHistory(),
+  history,
   routes: [
     {
       path: '/',
